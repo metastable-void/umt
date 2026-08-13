@@ -1,0 +1,50 @@
+[package]
+name = "umt"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Unified Music Theory (UMT-3.2): exact proportion, structural quotient, metric realization, and device approximation as distinct layers"
+repository = "https://github.com/metastable-void/umt"
+readme = "README.md"
+keywords = ["music", "temperament", "tuning", "rhythm", "microtonal"]
+categories = ["mathematics", "multimedia::audio", "no-std"]
+
+[features]
+default = ["std"]
+
+# `std` is purely additive. The semantic core is `no_std + alloc`; enabling `std`
+# only adds host integrations (`std::error::Error` blanket use, faster paths in
+# the numeric dependencies). It MUST NOT change any computed value.
+std = [
+    "num-bigint/std",
+    "num-integer/std",
+    "num-rational/std",
+    "num-rational/num-bigint-std",
+    "num-traits/std",
+    "thiserror/std",
+    "serde?/std",
+]
+
+# Native serialization support. See `docs/implementation-profile.md`: exact
+# integers and rationals are encoded as canonical decimal strings, never as
+# floating point, and never via a dependency's internal digit representation.
+serde = ["dep:serde"]
+
+[dependencies]
+num-bigint = { version = "0.4", default-features = false }
+num-integer = { version = "0.1", default-features = false }
+num-rational = { version = "0.4", default-features = false, features = ["num-bigint"] }
+num-traits = { version = "0.2", default-features = false }
+# Transcendental functions are taken from `libm` unconditionally, in both `std`
+# and `no_std` builds, so that L3 results are bit-identical across feature sets
+# and platforms (UMT-3.2 determinism requirement; prompt section 53).
+libm = { version = "0.2", default-features = false }
+thiserror = { version = "2", default-features = false }
+serde = { version = "1", optional = true, default-features = false, features = ["alloc", "derive"] }
+
+[dev-dependencies]
+proptest = "1"
+serde_json = "1"
+
+[package.metadata.docs.rs]
+all-features = true
