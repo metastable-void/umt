@@ -13,11 +13,11 @@ pub mod realization;
 pub mod temperament;
 
 #[doc(inline)]
-pub use crate::algebra::{Q, RoundingConvention, Z};
+pub use crate::algebra::{IntMatrix, Q, RoundingConvention, Sublattice, Z};
 #[doc(inline)]
 pub use crate::proportion::{Basis, BasisId, GeneratorId, GeneratorValuation, Monzo, PositiveQ};
 #[doc(inline)]
-pub use crate::temperament::edo::PatentVal;
+pub use crate::temperament::{AmbientLattice, PatentVal, TemperamentMap};
 
 /// Version of the UMT specification whose semantics this crate implements.
 ///

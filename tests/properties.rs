@@ -9,7 +9,9 @@ use std::sync::Arc;
 
 use proptest::prelude::*;
 use umt::algebra::integer::round_n_log2;
-use umt::{Basis, PatentVal, RoundingConvention, Z};
+use umt::algebra::normal_form::{HermiteNormalForm, SmithNormalForm};
+use umt::temperament::{AmbientLattice, TemperamentMap};
+use umt::{Basis, IntMatrix, PatentVal, RoundingConvention, Sublattice, Z};
 
 fn five_limit() -> Arc<Basis> {
     Basis::primes("umt:prime:2.3.5", &[2, 3, 5]).expect("valid prime basis")
@@ -21,6 +23,24 @@ fn seven_limit() -> Arc<Basis> {
 
 fn exponents() -> impl Strategy<Value = Vec<i64>> {
     prop::collection::vec(-64i64..=64, 3)
+}
+
+/// Small integer matrices of a given shape.
+fn matrices(rows: usize, cols: usize) -> impl Strategy<Value = IntMatrix> {
+    prop::collection::vec(-12i64..=12, rows * cols).prop_map(move |data| {
+        IntMatrix::new(rows, cols, data.into_iter().map(Z::from).collect())
+            .expect("shape matches the generated length")
+    })
+}
+
+/// A 5-limit mapping into a rank-1 ambient lattice, from three entries.
+fn five_limit_map(entries: [i64; 3]) -> TemperamentMap {
+    TemperamentMap::from_rows(
+        &five_limit(),
+        &AmbientLattice::new("umt:property-ambient", 1),
+        [entries],
+    )
+    .expect("shape matches the basis rank")
 }
 
 /// Compares `numer / denom` with `2^exponent` using plain integer arithmetic,
@@ -121,6 +141,131 @@ proptest! {
         prop_assert!(val.contains_ambient(&step));
         let coordinate = val.image_coordinate(&step).unwrap();
         prop_assert_eq!(val.embed_image(&coordinate).unwrap(), step);
+    }
+
+    /// Law P4: a monzo is in the kernel exactly when it maps to zero.
+    #[test]
+    fn p4_kernel_membership_iff_mapped_to_zero(
+        entries in prop::array::uniform3(-40i64..=40),
+        exponents in exponents(),
+    ) {
+        let map = five_limit_map(entries);
+        let monzo = five_limit().monzo(exponents).unwrap();
+        prop_assert_eq!(
+            map.kills(&monzo).unwrap(),
+            map.kernel().contains(&monzo).unwrap()
+        );
+    }
+
+    /// Law P5: a map-derived kernel is saturated. For every nonzero `n`,
+    /// `n m` in `K` implies `m` in `K`.
+    ///
+    /// This is a theorem for mappings into a free abelian group (UMT-3.2
+    /// section 1.4.1), used here as an implementation check. The zero
+    /// multiplier is excluded, as fixture F33 requires.
+    #[test]
+    fn p5_kernel_saturation_for_nonzero_multiples(
+        entries in prop::array::uniform3(-40i64..=40),
+        exponents in exponents(),
+        multiplier in prop::sample::select(vec![-7i64, -3, -2, -1, 1, 2, 3, 5, 12]),
+    ) {
+        let map = five_limit_map(entries);
+        let monzo = five_limit().monzo(exponents).unwrap();
+        let multiple = monzo.scale(&Z::from(multiplier));
+        if map.kills(&multiple).unwrap() {
+            prop_assert!(map.kills(&monzo).unwrap(), "kernel must be saturated");
+        }
+        prop_assert!(map.kernel().is_saturated());
+    }
+
+    /// Law P7: image coordinates round-trip through the ambient lattice for a
+    /// general mapping, and every mapped element is reachable.
+    #[test]
+    fn p7_general_image_round_trip(
+        entries in prop::array::uniform3(-40i64..=40),
+        exponents in exponents(),
+    ) {
+        let map = five_limit_map(entries);
+        let monzo = five_limit().monzo(exponents).unwrap();
+        let ambient = map.apply(&monzo).unwrap();
+        prop_assert!(map.image().contains(&ambient).unwrap());
+        let image = map.apply_to_image(&monzo).unwrap();
+        prop_assert_eq!(map.image().embed(&image).unwrap(), ambient);
+    }
+
+    /// Prompt section 10: the Smith normal form reconstructs its input, its
+    /// transforms are unimodular, its invariant factors divide in order, and
+    /// its kernel basis really is in the kernel.
+    #[test]
+    fn smith_normal_form_invariants(matrix in matrices(3, 4)) {
+        let form = SmithNormalForm::of(&matrix);
+
+        prop_assert_eq!(
+            form.left().multiply(&matrix).unwrap().multiply(form.right()).unwrap(),
+            form.diagonal()
+        );
+        prop_assert_eq!(
+            form.left().multiply(form.left_inverse()).unwrap(),
+            IntMatrix::identity(3)
+        );
+        prop_assert_eq!(
+            form.right().multiply(form.right_inverse()).unwrap(),
+            IntMatrix::identity(4)
+        );
+        for window in form.invariant_factors().windows(2) {
+            prop_assert!((&window[1] % &window[0]) == Z::from(0));
+        }
+        prop_assert!(matrix.multiply(&form.kernel_basis()).unwrap().is_zero());
+        prop_assert_eq!(form.kernel_basis().cols(), 4 - form.rank());
+    }
+
+    /// Prompt section 53: the Hermite form is canonical, so two generating
+    /// sets of the same lattice produce the same basis.
+    #[test]
+    fn hermite_normal_form_is_canonical(
+        generators in matrices(3, 2),
+        combination in matrices(2, 3),
+    ) {
+        let extra = generators.multiply(&combination).unwrap();
+        // `[G | G C]` generates the same lattice as `G`.
+        let mut columns: Vec<Vec<Z>> = Vec::new();
+        for source in [&generators, &extra] {
+            for col in 0..source.cols() {
+                columns.push(source.column(col).unwrap());
+            }
+        }
+        let mut data = Vec::new();
+        for row in 0..3 {
+            for column in &columns {
+                data.push(column[row].clone());
+            }
+        }
+        let widened = IntMatrix::new(3, columns.len(), data).unwrap();
+
+        prop_assert_eq!(
+            HermiteNormalForm::column_of(&generators).basis(),
+            HermiteNormalForm::column_of(&widened).basis()
+        );
+        prop_assert_eq!(
+            Sublattice::from_generators(3, &generators).unwrap(),
+            Sublattice::from_generators(3, &widened).unwrap()
+        );
+    }
+
+    /// Sublattice coordinates round-trip, and membership agrees with them.
+    #[test]
+    fn sublattice_coordinates_round_trip(
+        generators in matrices(3, 2),
+        coordinates in prop::collection::vec(-20i64..=20, 2),
+    ) {
+        let lattice = Sublattice::from_generators(3, &generators).unwrap();
+        let coordinates: Vec<Z> = coordinates.into_iter().take(lattice.rank()).map(Z::from).collect();
+        if coordinates.len() != lattice.rank() {
+            return Ok(());
+        }
+        let point = lattice.embed(&coordinates).unwrap();
+        prop_assert!(lattice.contains(&point).unwrap());
+        prop_assert_eq!(lattice.coordinates(&point).unwrap(), Some(coordinates));
     }
 
     /// UMT-3.2 section 1.6: the exact entry really is `round(N log2 x)`.

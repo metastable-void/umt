@@ -9,19 +9,27 @@
 //! `Gamma_N`. Keeping the two apart is the point of fixture F4: the 5-limit
 //! patent val for 6-EDO is `[6, 10, 14]`, whose image is `2Z`, so an odd
 //! ambient step has no automatic detempering under that mapping.
+//!
+//! A [`PatentVal`] is a *constructor* for a [`TemperamentMap`] plus the
+//! provenance of how its entries were derived. The structural behaviour is the
+//! general one; the convenience accessors here are scalar views of it, valid
+//! because the ambient rank is 1.
 
+use alloc::string::ToString;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use num_integer::Integer;
 use num_traits::Zero;
 
 use crate::algebra::integer::round_n_log2;
+use crate::algebra::matrix::IntMatrix;
 use crate::algebra::{RoundingConvention, Z};
-use crate::error::PatentValError;
+use crate::error::{PatentValError, TemperamentError};
 use crate::proportion::GeneratorValuation;
 use crate::proportion::basis::Basis;
-use crate::proportion::monzo::{Monzo, compatible};
+use crate::proportion::monzo::Monzo;
+use crate::temperament::image::AmbientLattice;
+use crate::temperament::map::{RawTemperamentMap, TemperamentMap};
 
 /// Whether a derived structural object was computed exactly.
 ///
@@ -47,12 +55,12 @@ pub enum Exactness {
 /// UMT layer: L2 structural map, exact whenever [`PatentVal::exactness`] is
 /// [`Exactness::Exact`].
 ///
-/// This is the rank-1 special case of a regular temperament mapping. It is
+/// This is the rank-1 case of [`TemperamentMap`], which it wraps. It is
 /// deliberately a distinct type from a tuning: it maps lattice elements to
 /// integer step counts, not to real interval sizes.
 ///
-/// Equality is presentation equality over the basis, the division count, the
-/// entries, and the declared rounding convention.
+/// Equality is presentation equality over the underlying mapping, the division
+/// count, and the declared rounding convention.
 ///
 /// # Examples
 ///
@@ -69,13 +77,15 @@ pub enum Exactness {
 /// assert!(!val.is_surjective());
 /// assert!(!val.contains_ambient(&Z::from(1)));
 /// assert!(val.contains_ambient(&Z::from(4)));
+///
+/// // The full structural mapping is available for anything else.
+/// assert_eq!(val.map().kernel().rank(), 2);
 /// # Ok::<(), Box<dyn core::error::Error>>(())
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PatentVal {
-    basis: Arc<Basis>,
+    map: TemperamentMap,
     divisions: u32,
-    entries: Vec<Z>,
     convention: RoundingConvention,
     exactness: Exactness,
 }
@@ -96,6 +106,11 @@ impl PatentVal {
     ///
     /// `divisions == 0` is permitted and yields the zero mapping, whose image
     /// is the trivial group.
+    ///
+    /// The ambient lattice is declared as `umt:edo:<divisions>`: two patent
+    /// vals for the same division count share one ambient step lattice, even
+    /// over different bases, because `Gamma_N = Z` is the same declared
+    /// object.
     ///
     /// # Errors
     ///
@@ -143,19 +158,45 @@ impl PatentVal {
             Exactness::RealValued
         };
 
+        let mut ambient_id = alloc::string::String::from("umt:edo:");
+        ambient_id.push_str(&divisions.to_string());
+        let ambient = AmbientLattice::new(&ambient_id, 1);
+        let matrix = IntMatrix::new(1, entries.len(), entries)
+            .map_err(|error| PatentValError::Temperament(error.into()))?;
+
+        let map = TemperamentMap::new(RawTemperamentMap {
+            domain: Arc::clone(basis),
+            ambient,
+            matrix,
+        })?;
+
         Ok(Self {
-            basis: Arc::clone(basis),
+            map,
             divisions,
-            entries,
             convention,
             exactness,
         })
     }
 
+    /// The underlying structural mapping.
+    ///
+    /// Everything the general API offers - kernel, image lattice, invariant
+    /// factors, intrinsic image coordinates - is reached through here.
+    #[must_use]
+    pub fn map(&self) -> &TemperamentMap {
+        &self.map
+    }
+
+    /// Consumes the patent val, returning the structural mapping.
+    #[must_use]
+    pub fn into_map(self) -> TemperamentMap {
+        self.map
+    }
+
     /// The basis this mapping is defined over.
     #[must_use]
     pub fn basis(&self) -> &Arc<Basis> {
-        &self.basis
+        self.map.domain()
     }
 
     /// The number of equal divisions `N`.
@@ -167,7 +208,10 @@ impl PatentVal {
     /// The mapping row `[v_1, ..., v_k]`.
     #[must_use]
     pub fn entries(&self) -> &[Z] {
-        &self.entries
+        self.map
+            .matrix()
+            .row(0)
+            .expect("invariant: an equal-division mapping has exactly one row")
     }
 
     /// The rounding convention used to derive the entries.
@@ -185,27 +229,14 @@ impl PatentVal {
         self.exactness
     }
 
-    /// Applies the mapping: `V_N(m) = sum_i a_i v_i`.
-    ///
-    /// The result is an ambient coordinate in `Gamma_N = Z`, counting steps.
+    /// Applies the mapping: `V_N(m) = sum_i a_i v_i`, in ambient steps.
     ///
     /// # Errors
     ///
-    /// Returns [`PatentValError::BasisMismatch`] if the monzo is over an
+    /// Returns [`TemperamentError::BasisMismatch`] if the monzo is over an
     /// unrelated basis.
-    pub fn apply(&self, monzo: &Monzo) -> Result<Z, PatentValError> {
-        if !compatible(monzo.basis(), &self.basis) {
-            return Err(PatentValError::BasisMismatch {
-                expected: self.basis.id().clone(),
-                found: monzo.basis().id().clone(),
-            });
-        }
-        Ok(monzo
-            .exponents()
-            .iter()
-            .zip(&self.entries)
-            .map(|(a, v)| a * v)
-            .sum())
+    pub fn apply(&self, monzo: &Monzo) -> Result<Z, TemperamentError> {
+        Ok(self.map.apply(monzo)?.coordinates()[0].clone())
     }
 
     /// The positive generator of the image `H = im(V_N) = g Z`, or zero for
@@ -214,16 +245,18 @@ impl PatentVal {
     /// UMT-3.2 section 1.6 fixes the convention `gcd(0, ..., 0) = 0`.
     #[must_use]
     pub fn image_generator(&self) -> Z {
-        self.entries
-            .iter()
-            .fold(Z::zero(), |accumulator, entry| accumulator.gcd(entry))
+        if self.map.image().rank() == 0 {
+            Z::zero()
+        } else {
+            self.map.image().basis().at(0, 0).clone()
+        }
     }
 
     /// The rank of the image: 1 for any nonzero mapping, 0 for the zero
     /// mapping.
     #[must_use]
     pub fn image_rank(&self) -> usize {
-        usize::from(!self.image_generator().is_zero())
+        self.map.image().rank()
     }
 
     /// Whether the mapping reaches all of the ambient step lattice.
@@ -233,7 +266,7 @@ impl PatentVal {
     /// group is torsion-free (UMT-3.2 sections 1.4.1 and 1.4.2).
     #[must_use]
     pub fn is_surjective(&self) -> bool {
-        self.image_generator() == Z::from(1)
+        self.map.is_surjective()
     }
 
     /// Whether an ambient step lies in the image.
@@ -243,49 +276,45 @@ impl PatentVal {
     /// them, so they have no automatic L1 detempering.
     #[must_use]
     pub fn contains_ambient(&self, step: &Z) -> bool {
-        let generator = self.image_generator();
-        if generator.is_zero() {
-            step.is_zero()
-        } else {
-            (step % generator).is_zero()
-        }
+        let element = self
+            .map
+            .ambient()
+            .element([step.clone()])
+            .expect("invariant: the ambient step lattice has rank one");
+        self.map
+            .image()
+            .contains(&element)
+            .expect("invariant: the element was built from this ambient lattice")
     }
 
-    /// Converts an ambient coordinate into the intrinsic coordinate of the
-    /// image lattice `H = g Z`.
-    ///
-    /// This is the rank-1 form of the ambient-to-image conversion required by
-    /// prompt section 11: image elements are expressed in their own
-    /// coordinates rather than being confused with ambient ones.
+    /// Converts an ambient step into the intrinsic coordinate of the image
+    /// lattice `H = g Z`.
     ///
     /// # Errors
     ///
-    /// Returns [`PatentValError::NotInImage`] if the step is not reachable,
-    /// and [`PatentValError::TrivialImage`] if the mapping is the zero map, so
-    /// its image has rank zero and no integer coordinate.
-    pub fn image_coordinate(&self, step: &Z) -> Result<Z, PatentValError> {
-        let generator = self.image_generator();
-        if generator.is_zero() {
-            return Err(PatentValError::TrivialImage);
+    /// Returns [`TemperamentError::NotInImage`] if the step is not reachable,
+    /// and [`TemperamentError::TrivialImage`] if the mapping is the zero map,
+    /// whose image has rank zero and therefore no scalar coordinate.
+    pub fn image_coordinate(&self, step: &Z) -> Result<Z, TemperamentError> {
+        if self.map.image().rank() == 0 {
+            return Err(TemperamentError::TrivialImage);
         }
-        if !(step % &generator).is_zero() {
-            return Err(PatentValError::NotInImage { step: step.clone() });
-        }
-        Ok(step / generator)
+        let element = self.map.ambient().element([step.clone()])?;
+        Ok(self.map.image().from_ambient(&element)?.coordinates()[0].clone())
     }
 
     /// Embeds an intrinsic image coordinate back into the ambient lattice.
     ///
     /// # Errors
     ///
-    /// Returns [`PatentValError::TrivialImage`] if the mapping is the zero
+    /// Returns [`TemperamentError::TrivialImage`] if the mapping is the zero
     /// map.
-    pub fn embed_image(&self, coordinate: &Z) -> Result<Z, PatentValError> {
-        let generator = self.image_generator();
-        if generator.is_zero() {
-            return Err(PatentValError::TrivialImage);
+    pub fn embed_image(&self, coordinate: &Z) -> Result<Z, TemperamentError> {
+        if self.map.image().rank() == 0 {
+            return Err(TemperamentError::TrivialImage);
         }
-        Ok(coordinate * generator)
+        let element = self.map.image().element([coordinate.clone()])?;
+        Ok(self.map.image().embed(&element)?.coordinates()[0].clone())
     }
 }
 
@@ -293,7 +322,7 @@ impl core::fmt::Display for PatentVal {
     /// Writes standard val notation, for example `<12 19 28]`.
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.write_str("<")?;
-        for (index, entry) in self.entries.iter().enumerate() {
+        for (index, entry) in self.entries().iter().enumerate() {
             if index > 0 {
                 f.write_str(" ")?;
             }
@@ -307,10 +336,11 @@ impl core::fmt::Display for PatentVal {
 mod tests {
     use super::{Exactness, PatentVal};
     use crate::algebra::{RoundingConvention, Z};
-    use crate::error::PatentValError;
+    use crate::error::TemperamentError;
     use crate::proportion::{Basis, PositiveFinite, RealValuation};
     use alloc::string::ToString;
     use alloc::sync::Arc;
+    use alloc::vec;
 
     const NEAREST: RoundingConvention = RoundingConvention::NearestHalfAwayFromZero;
 
@@ -330,9 +360,12 @@ mod tests {
         // The syntonic comma is in the kernel of 12-EDO.
         let comma = basis.monzo([-4, 4, -1]).unwrap();
         assert_eq!(val.apply(&comma).unwrap(), Z::from(0));
+        assert!(val.map().kernel().contains(&comma).unwrap());
         // The pythagorean comma is too.
         let comma = basis.monzo([-19, 12, 0]).unwrap();
         assert_eq!(val.apply(&comma).unwrap(), Z::from(0));
+        assert!(val.map().kernel().contains(&comma).unwrap());
+        assert_eq!(val.map().kernel().rank(), 2);
     }
 
     #[test]
@@ -351,7 +384,9 @@ mod tests {
 
         assert_eq!(
             val.image_coordinate(&Z::from(1)),
-            Err(PatentValError::NotInImage { step: Z::from(1) })
+            Err(TemperamentError::NotInImage {
+                coordinates: vec![Z::from(1)]
+            })
         );
         assert_eq!(val.image_coordinate(&Z::from(6)), Ok(Z::from(3)));
         assert_eq!(val.embed_image(&Z::from(3)), Ok(Z::from(6)));
@@ -369,12 +404,14 @@ mod tests {
         assert!(!val.contains_ambient(&Z::from(1)));
         assert_eq!(
             val.image_coordinate(&Z::from(0)),
-            Err(PatentValError::TrivialImage)
+            Err(TemperamentError::TrivialImage)
         );
         assert_eq!(
             val.embed_image(&Z::from(0)),
-            Err(PatentValError::TrivialImage)
+            Err(TemperamentError::TrivialImage)
         );
+        // Everything is tempered out by the zero mapping.
+        assert_eq!(val.map().kernel().rank(), 3);
     }
 
     #[test]
@@ -397,7 +434,7 @@ mod tests {
         let monzo = other.monzo([1, 0, 0]).unwrap();
         assert!(matches!(
             val.apply(&monzo),
-            Err(PatentValError::BasisMismatch { .. })
+            Err(TemperamentError::BasisMismatch { .. })
         ));
     }
 
@@ -429,5 +466,20 @@ mod tests {
         assert_eq!(nearest.entries(), &[Z::from(5), Z::from(8), Z::from(12)]);
         assert_eq!(floor.entries(), &[Z::from(5), Z::from(7), Z::from(11)]);
         assert_ne!(nearest, floor);
+        // Different rounding gives a different structural mapping, hence a
+        // different kernel.
+        assert_ne!(nearest.map().kernel(), floor.map().kernel());
+    }
+
+    #[test]
+    fn the_ambient_step_lattice_is_shared_across_bases() {
+        let five = PatentVal::new(&five_limit(), 12, NEAREST).unwrap();
+        let seven = PatentVal::new(
+            &Basis::primes("umt:prime:2.3.5.7", &[2, 3, 5, 7]).unwrap(),
+            12,
+            NEAREST,
+        )
+        .unwrap();
+        assert_eq!(five.map().ambient(), seven.map().ambient());
     }
 }

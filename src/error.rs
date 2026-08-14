@@ -11,6 +11,7 @@ use alloc::string::String;
 
 use crate::algebra::Z;
 use crate::proportion::basis::{BasisId, GeneratorId};
+use crate::temperament::image::LatticeId;
 
 /// A generator valuation could not be accepted or applied.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -86,6 +87,47 @@ pub enum BasisError {
     Valuation(#[from] ValuationError),
 }
 
+/// An integer-matrix or lattice operation was rejected.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum MatrixError {
+    /// Row-major data did not match the declared shape.
+    #[error("expected {expected} entries for this shape, found {found}")]
+    DataLength {
+        /// Entries required by the declared shape.
+        expected: usize,
+        /// Entries supplied.
+        found: usize,
+    },
+
+    /// Rows of differing length were supplied.
+    #[error("expected rows of width {expected}, found one of width {found}")]
+    RaggedRows {
+        /// Width established by the first row.
+        expected: usize,
+        /// Width of the offending row.
+        found: usize,
+    },
+
+    /// Two operands had incompatible dimensions.
+    #[error("dimension mismatch: {left} versus {right}")]
+    DimensionMismatch {
+        /// Dimension required by the left operand.
+        left: usize,
+        /// Dimension offered by the right operand.
+        right: usize,
+    },
+
+    /// An index was outside the matrix.
+    #[error("index ({row}, {col}) is out of bounds")]
+    IndexOutOfBounds {
+        /// Row index.
+        row: usize,
+        /// Column index.
+        col: usize,
+    },
+}
+
 /// A monzo operation was rejected.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
@@ -117,38 +159,106 @@ pub enum MonzoError {
     Valuation(#[from] ValuationError),
 }
 
-/// An equal-division mapping could not be constructed or applied.
+/// A temperament mapping, image, or kernel operation was rejected.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
-pub enum PatentValError {
-    /// A monzo from an unrelated basis was supplied to this mapping.
-    #[error("basis mismatch: mapping is over `{expected}`, argument is over `{found}`")]
+pub enum TemperamentError {
+    /// The mapping matrix does not match the declared domain and ambient
+    /// ranks.
+    #[error(
+        "mapping matrix must be {expected_rows}x{expected_cols} for this domain and ambient lattice, found {found_rows}x{found_cols}"
+    )]
+    ShapeMismatch {
+        /// Rows required, that is, the ambient rank.
+        expected_rows: usize,
+        /// Columns required, that is, the domain rank.
+        expected_cols: usize,
+        /// Rows supplied.
+        found_rows: usize,
+        /// Columns supplied.
+        found_cols: usize,
+    },
+
+    /// A monzo from an unrelated basis was supplied.
+    #[error("basis mismatch: expected `{expected}`, found `{found}`")]
     BasisMismatch {
-        /// Identity of the basis this mapping is defined over.
+        /// Identity of the expected basis.
         expected: BasisId,
-        /// Identity of the argument's basis.
+        /// Identity of the supplied basis.
         found: BasisId,
     },
 
-    /// An ambient step is not in the image `H = im(V)` of this mapping.
-    ///
-    /// This is the expected outcome for an odd 6-EDO step under `[6,10,14]`
-    /// (UMT-3.2 section 1.6.1, fixture F4): detempering is defined on `H`, not
-    /// on arbitrary elements of the ambient lattice `Gamma`.
-    #[error("ambient step {step} is not in the image of this mapping")]
-    NotInImage {
-        /// The rejected ambient coordinate.
-        step: Z,
+    /// An element of an unrelated ambient lattice was supplied.
+    #[error("ambient lattice mismatch: expected `{expected}`, found `{found}`")]
+    AmbientMismatch {
+        /// Identity of the expected ambient lattice.
+        expected: LatticeId,
+        /// Identity of the supplied element's lattice.
+        found: LatticeId,
     },
 
-    /// The image of this mapping is the trivial group.
+    /// An element of a different image lattice was supplied.
+    #[error("image lattice mismatch")]
+    ImageMismatch,
+
+    /// An element of a different kernel lattice was supplied.
+    #[error("kernel lattice mismatch")]
+    KernelMismatch,
+
+    /// An ambient element is not in the reachable image `H = im(V)`.
     ///
-    /// A rank-zero image has no integer coordinate, so ambient-to-image
-    /// conversion is undefined rather than zero (UMT-3.2 section 1.6: the zero
-    /// mapping has `H_N = {0}`).
+    /// Not a defect: an ambient coordinate outside the image simply has no
+    /// automatic detempering under the mapping (UMT-3.2 section 1.6.1).
+    #[error("ambient element is not in the image of this mapping")]
+    NotInImage {
+        /// The rejected ambient coordinates.
+        coordinates: alloc::vec::Vec<Z>,
+    },
+
+    /// The image of a mapping is the trivial group, so it has no rank-one
+    /// coordinate.
+    ///
+    /// Raised only by the rank-one convenience API of
+    /// [`crate::temperament::PatentVal`]. In the general API a rank-zero image
+    /// has an empty coordinate vector, which is the correct answer rather than
+    /// an error.
     #[error("the image of this mapping is trivial and has no rank-one coordinate")]
     TrivialImage,
 
+    /// A coordinate vector did not match the rank of its lattice.
+    #[error("expected {expected} coordinates, found {found}")]
+    CoordinateRank {
+        /// Rank of the lattice.
+        expected: usize,
+        /// Number of coordinates supplied.
+        found: usize,
+    },
+
+    /// A directly supplied comma subgroup is not saturated.
+    ///
+    /// Such a subgroup defines a quotient with torsion, which no homomorphism
+    /// into a torsion-free real group can realize (UMT-3.2 section 1.5). This
+    /// applies to directly specified commas only; a kernel computed from a
+    /// mapping is saturated automatically and is never rejected for this.
+    #[error("directly supplied comma subgroup is not saturated")]
+    UnsaturatedCommaSubgroup {
+        /// The invariant factors above 1, that is, the torsion orders of the
+        /// resulting quotient.
+        torsion_invariants: alloc::vec::Vec<Z>,
+    },
+
+    /// An underlying matrix or lattice operation failed.
+    #[error(transparent)]
+    Matrix(#[from] MatrixError),
+}
+
+/// An equal-division mapping could not be constructed.
+///
+/// Operations on a constructed mapping report [`TemperamentError`]; this type
+/// covers only what can go wrong while deriving the entries.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum PatentValError {
     /// A generator's valuation is unusable for an equal-division entry.
     #[error("generator {index} has a valuation that cannot produce an entry: {reason}")]
     UnusableValuation {
@@ -157,4 +267,8 @@ pub enum PatentValError {
         /// Why the valuation could not be used.
         reason: String,
     },
+
+    /// Building the underlying structural mapping failed.
+    #[error(transparent)]
+    Temperament(#[from] TemperamentError),
 }

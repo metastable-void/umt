@@ -24,11 +24,17 @@ src/
     integer.rs            Z, exact round(n log2 p/q), L3 log helpers
     rational.rs           Q
     rounding.rs           RoundingConvention
+    matrix.rs             IntMatrix
+    normal_form.rs        SmithNormalForm, canonical HermiteNormalForm
+    lattice.rs            Sublattice: membership, coordinates, saturation
   proportion/
     basis.rs              BasisId, GeneratorId, Basis, RawBasis, BasisBuilder
     monzo.rs              Monzo with basis-checked arithmetic
     valuation.rs          PositiveQ, PositiveFinite, RealValuation
   temperament/
+    map.rs                RawTemperamentMap, TemperamentMap
+    image.rs              LatticeId, AmbientLattice/Elem, ImageLattice/Elem
+    kernel.rs             KernelLattice/Elem, saturation policy and report
     edo.rs                PatentVal, Exactness
   realization/
     provenance.rs         ProvenanceId
@@ -37,27 +43,43 @@ src/
     serde_exact.rs        serde adapters (feature `serde`)
 ```
 
+`PatentVal` wraps a `TemperamentMap` rather than reimplementing it. Its scalar
+accessors (`image_generator`, `image_coordinate`, `embed_image`) are views of
+the general machinery that are meaningful only because the ambient rank is 1;
+`PatentVal::map` reaches the general object.
+
 ## Planned modules
 
 Following the staging of the implementation prompt, in order:
 
-1. `algebra/vector.rs`, `matrix.rs`, `normal_form.rs`, `lattice.rs` - integer
-   matrices, Smith and Hermite normal forms, free lattices and sublattices.
-2. `temperament/map.rs`, `image.rs`, `kernel.rs` - the general
-   `TemperamentMap` with `RawTemperamentMap` validation, `AmbientLattice`,
-   `ImageLattice`, kernel bases. `PatentVal` becomes a constructor for it.
-3. `temperament/splitting.rs`, `representative.rs` - `HomomorphicSplit` and
+1. `temperament/splitting.rs`, `representative.rs` - `HomomorphicSplit` and
    `RepresentativePolicy`, kept as separate traits, with `LiftDecision` and
-   exact kernel residues.
-4. `proportion/complexity.rs` - `group_length`, `lattice_seminorm`,
-   `lattice_norm`, `cost` as distinct declared profiles.
-5. `pitch/`, then `time/`, then `score/`, then `realization/`, then the native
+   exact kernel residues carried as `KernelElem`. This is what completes
+   fixtures F4, F6, and F7.
+2. `proportion/complexity.rs` - `group_length`, `lattice_seminorm`,
+   `lattice_norm`, `cost` as distinct declared profiles (F5, F34).
+3. Unit equivalence as a constructed quotient (UMT-3.2 section 1.9), which
+   completes F3 and F22.
+4. `pitch/`, then `time/`, then `score/`, then `realization/`, then the native
    container in `io/`.
 
-`PatentVal` deliberately exposes a rank-1 preview of the ambient/image
-distinction (`image_generator`, `image_coordinate`, `embed_image`). When
-`ImageLattice` lands, those become thin wrappers over the general form rather
-than a parallel implementation.
+## Why the normal forms are what they are
+
+Hermite is canonical here, Smith is not. That asymmetry is deliberate:
+
+- A lattice's *identity* must be canonical, so `Sublattice`, `ImageLattice`,
+  and `KernelLattice` all store a canonical Hermite basis. Two sublattices are
+  then equal as values exactly when they are equal as subgroups, and
+  serialized output is reproducible.
+- Smith normal form is used only for things that do not depend on the choice
+  of transforms: invariant factors, rank, a kernel basis (which is immediately
+  canonicalized), and a saturation basis (likewise). Nothing downstream
+  observes the particular `U` and `V`.
+
+Derived structure is computed eagerly in `TemperamentMap::new`, not cached
+lazily. That keeps the type free of interior mutability, keeps it `Send +
+Sync`, avoids a `std`-only `OnceLock`, and guarantees equality can never depend
+on cache state.
 
 ## Why `Arc<Basis>` inside `Monzo`
 

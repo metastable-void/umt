@@ -7,10 +7,13 @@ choice made explicit.
 
 ## Status
 
-Early. The exact proportion core and equal-division mappings are implemented;
-the general temperament map, pitch, time, score, realization, and native
-serialization layers are not. See `docs/architecture.md` for the staging plan
-and `docs/conformance.md` for which UMT-3.2 fixtures are covered.
+Early. Implemented: the exact proportion core, exact integer matrices with
+Smith and canonical Hermite normal forms, free lattices, regular temperament
+mappings with their image and kernel lattices, comma-subgroup saturation
+validation, and equal divisions. Not implemented: representative policies and
+splittings, complexity profiles, pitch, time, score, realization, and the
+native container. See `docs/architecture.md` for the staging plan and
+`docs/conformance.md` for which UMT-3.2 fixtures are covered.
 
 This crate does not yet claim UMT-3.2 conformance. Conformance is claimed only
 when the applicable mandatory fixture suite passes.
@@ -40,6 +43,13 @@ let twelve = PatentVal::new(&basis, 12, RoundingConvention::NearestHalfAwayFromZ
 let syntonic = basis.monzo([-4, 4, -1])?;
 assert_eq!(syntonic.exact_ratio()?.to_string(), "81/80");
 assert_eq!(twelve.apply(&syntonic)?, Z::from(0));
+
+// The tempered-out commas are a lattice, not a list: rank 2 here, and
+// saturated as a theorem rather than as a validation step.
+let kernel = twelve.map().kernel();
+assert_eq!(kernel.rank(), 2);
+assert!(kernel.is_saturated());
+assert!(kernel.contains(&syntonic)?);
 # Ok::<(), Box<dyn core::error::Error>>(())
 ```
 
@@ -107,5 +117,14 @@ leaves open, that choice is recorded in `docs/implementation-profile.md`. Where
 the specification appears to be wrong or self-inconsistent, the finding is
 recorded in `docs/spec-issues.md` with a counterexample and the conservative
 behaviour implemented in the meantime - never silently coded around.
+
+## License
+
+Dual-licensed under either of
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+- Mozilla Public License, Version 2.0 ([LICENSE-MPL](LICENSE-MPL))
+
+at your option.
 
 [`libm`]: https://docs.rs/libm

@@ -6,6 +6,7 @@ rust-version = "1.85"
 description = "Unified Music Theory (UMT-3.2): exact proportion, structural quotient, metric realization, and device approximation as distinct layers"
 repository = "https://github.com/metastable-void/umt"
 readme = "README.md"
+license = "Apache-2.0 OR MPL-2.0"
 keywords = ["music", "temperament", "tuning", "rhythm", "microtonal"]
 categories = ["mathematics", "multimedia::audio", "no-std"]
 

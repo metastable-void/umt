@@ -16,8 +16,8 @@ Status values:
 
 | Fixture | Subject | Status | Test |
 |---|---|---|---|
-| F1 | Kernel saturation versus surjectivity, `V = [2]` | pending | needs `TemperamentMap` over a general integer matrix |
-| F2 | Unsaturated direct comma subgroup | pending | needs direct comma-subgroup validation |
+| F1 | Kernel saturation versus surjectivity, `V = [2]` | pass | `tests/conformance.rs::f01_kernel_saturation_versus_surjectivity` |
+| F2 | Unsaturated direct comma subgroup | pass | `tests/conformance.rs::f02_unsaturated_direct_comma_subgroup` |
 | F3 | 12-EDO quotient | partial | `tests/conformance.rs::f03_twelve_edo_quotient_partial` |
 | F4 | 6-EDO image is `2Z` | partial | `tests/conformance.rs::f04_6edo_image_partial` |
 | F5 | Height with a generator below 1 | pending | needs complexity profiles |
@@ -48,24 +48,27 @@ Status values:
 | F30 | Markdown math-source and vocabulary lint | pending | source lint, not a library test |
 | F31 | Regular interval tuning requires a point reference | pending | needs tuning and references |
 | F32 | Reciprocal rate and duration orientation | pending | needs the rate-continuum interface |
-| F33 | Saturation excludes the zero multiplier | pending | needs kernels |
+| F33 | Saturation excludes the zero multiplier | pass | `tests/conformance.rs::f33_saturation_excludes_the_zero_multiplier` |
 | F34 | Group length versus lattice norm | pending | needs complexity profiles |
 | F35 | Three-note quarter-comma-meantone MOS | pending | needs generated sets |
 
 ## Outstanding obligations for the partial fixtures
 
-**F3.** The quotient `T = Lambda_B / K` is not constructed as an object; only
-the mapping's behaviour on the two commas, its surjectivity, and the octave
-image are asserted. Completing it needs the kernel machinery.
+**F3.** The kernel, its rank, and the image are now all constructed and
+asserted, so the reachable quotient is pinned down as free of rank 1 by the
+first isomorphism theorem. What remains is unit equivalence as a constructed
+quotient object: `Z/12Z` is currently asserted as an index computation
+(UMT-3.2 section 1.9).
 
 **F4.** Detempering itself is not implemented, so the fixture's "no automatic
 L1 detempering" clause is asserted in its contrapositive form: an odd ambient
 step is rejected as not in the image. Completing it needs a representative
-policy, at which point the assertion becomes "no lift exists".
+policy, at which point the assertion becomes that the policy's domain is `H`,
+so no lift is even requestable.
 
 **F22.** The class counts are derived from the represented image and octave
 image rather than asserted as constants, but the quotient groups themselves
-are not constructed.
+are not constructed. Same dependency as F3.
 
 ## Law coverage
 
@@ -77,11 +80,16 @@ UMT-3.2 section 9.1 and prompt section 47 laws currently exercised, in
 | P1 free-lattice arithmetic | `p1_addition_is_associative`, `p1_zero_and_inverse` |
 | P2 exact rational valuation | `p2_valuation_is_multiplicative` |
 | P3 mapping homomorphism | `p3_mapping_is_a_homomorphism` |
-| P7 image distinction | `p7_image_membership_and_round_trip` |
+| P4 kernel correctness | `p4_kernel_membership_iff_mapped_to_zero` |
+| P5 map-derived kernel saturation | `p5_kernel_saturation_for_nonzero_multiples` |
+| P6 direct-comma validation | `tests/conformance.rs::f02_unsaturated_direct_comma_subgroup` |
+| P7 image distinction | `p7_image_membership_and_round_trip`, `p7_general_image_round_trip` |
 | Basis-mismatch rejection | `basis_mismatch_is_always_rejected` |
+| Normal-form invariants (prompt section 10) | `smith_normal_form_invariants`, `hermite_normal_form_is_canonical`, `sublattice_coordinates_round_trip`, plus the unit tests in `src/algebra/normal_form.rs` |
 | Section 1.6 entry definition | `nearest_entry_satisfies_its_defining_inequality`, `floor_entry_satisfies_its_defining_inequality`, `conventions_are_ordered`, `octave_entry_is_fixed_to_n` |
 
-Laws P4, P5, P6, P8 to P11, the complexity profiles, tuning, torsor,
-voice-leading, notation, rhythm-tree, quantization, tempo-map, and
-temporal-constraint laws are not yet applicable: the structures they constrain
-do not exist.
+Laws P8 to P11 (right inverse, residue, lens laws, linear-splitting
+declaration) are the next stage: they constrain representative policies, which
+do not exist yet. The complexity, tuning, torsor, voice-leading, notation,
+rhythm-tree, quantization, tempo-map, and temporal-constraint laws are
+likewise not yet applicable.

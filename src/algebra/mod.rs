@@ -15,11 +15,20 @@
 //! never feed an exact decision.
 
 pub mod integer;
+pub mod lattice;
+pub mod matrix;
+pub mod normal_form;
 pub mod rational;
 pub mod rounding;
 
 #[doc(inline)]
 pub use crate::algebra::integer::Z;
+#[doc(inline)]
+pub use crate::algebra::lattice::Sublattice;
+#[doc(inline)]
+pub use crate::algebra::matrix::IntMatrix;
+#[doc(inline)]
+pub use crate::algebra::normal_form::{HermiteNormalForm, SmithNormalForm};
 #[doc(inline)]
 pub use crate::algebra::rational::Q;
 #[doc(inline)]
