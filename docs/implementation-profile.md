@@ -180,7 +180,49 @@ valuations. Everything about applying a mapping, converting coordinates, or
 validating a comma subgroup reports `TemperamentError`, so callers match one
 error type across the layer rather than translating between parallel ones.
 
-## D13. `divisions = 0` is a legal mapping
+## D13. Canonical identity and readable presentation are separate methods
+
+The canonical Hermite basis pivots on the first coordinate, which for a prime
+basis is the octave. That drives the higher-prime exponents up: the 12-EDO
+kernel comes out as `[1 20 -14>` and `[0 28 -19>` - correct, canonical, and
+unrecognizable to a musician.
+
+So each of these objects exposes two views, and the docs say which is which:
+
+- `KernelLattice::basis` and `basis_monzos` - canonical. Identity, equality,
+  serialization.
+- `KernelLattice::comma_basis` and `comma_basis_monzos` - presentation. The
+  same normal form with the coordinate order reversed, so pivots eliminate the
+  *highest* generator first. For 12-EDO this yields the Pythagorean comma and
+  the schisma, both under 25 cents.
+
+The same reasoning drives `Sublattice::reduce` versus `reduce_reversed`. Both
+give one canonical representative per coset; the reversed one keeps the
+high-generator exponents small, which is what makes
+`TemperamentMap::preimage` return `3/2` for the 12-EDO class of seven steps
+instead of a twenty-digit member of the same fiber.
+
+Neither presentation form is a claim of minimal complexity. That would need a
+declared complexity function and a reduction against it, which is a later
+stage.
+
+## D14. A linear splitting cannot be a spelling policy, and the API shows it
+
+A homomorphic splitting is forced to send the class `n x` to `n` times the lift
+of `x`. For 12-EDO that means the lift of seven steps is seven times the lift
+of one step, which is enormous however the lift of one step is chosen. No
+amount of reduction fixes this: it is what additivity *means* here.
+
+That is exactly why UMT-3.2 section 1.7 splits the concept in two, and why this
+crate has both `LinearSplit` (additive, useful for direct-sum decompositions)
+and `CanonicalLiftPolicy` (reduces every class independently, small, and
+correctly declining to claim homomorphism). `examples/temperament_12edo.rs`
+prints both side by side, because the contrast is the lesson.
+
+`OffsetPolicy` composes over any policy rather than only over a splitting, so
+an adaptive policy can be layered on either base.
+
+## D15. `divisions = 0` is a legal mapping
 
 The zero mapping has image `{0}`, which section 1.6 fixes through the
 convention `gcd(0, ..., 0) = 0`. In the general API its image has rank 0 and
@@ -188,7 +230,7 @@ an image element has an empty coordinate vector, which is the correct answer.
 Only the rank-one scalar convenience API of `PatentVal` has nothing to return,
 and it reports `TrivialImage` rather than pretending the answer is zero.
 
-## D14. Rank-0 bases are permitted
+## D16. Rank-0 bases are permitted
 
 A basis with no generators spans the trivial lattice. Nothing breaks, and
 rejecting it would be an invented restriction.

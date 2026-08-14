@@ -247,9 +247,22 @@ pub enum TemperamentError {
         torsion_invariants: alloc::vec::Vec<Z>,
     },
 
+    /// A representative policy or splitting violated its own contract.
+    ///
+    /// The right-inverse law `V(sigma(x)) = x` is not optional (UMT-3.2 law
+    /// P8). A policy that returns a lift outside the fiber it was asked about
+    /// is reported here rather than silently producing a residue that is not
+    /// in the kernel.
+    #[error("the representative policy is not a right inverse of this mapping")]
+    NotARightInverse,
+
     /// An underlying matrix or lattice operation failed.
     #[error(transparent)]
     Matrix(#[from] MatrixError),
+
+    /// An underlying monzo operation failed.
+    #[error(transparent)]
+    Monzo(#[from] MonzoError),
 }
 
 /// An equal-division mapping could not be constructed.

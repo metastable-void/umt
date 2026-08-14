@@ -197,6 +197,22 @@ impl IntMatrix {
         self.data.iter().all(Zero::is_zero)
     }
 
+    /// The same matrix with its rows in reverse order.
+    ///
+    /// Used to run a normal form with the coordinate order reversed, which
+    /// changes which coordinates its pivots prefer to eliminate.
+    #[must_use]
+    pub fn reverse_rows(&self) -> Self {
+        let mut out = Self::zeros(self.rows, self.cols);
+        for row in 0..self.rows {
+            let source = self.rows - 1 - row;
+            for col in 0..self.cols {
+                out.data[row * self.cols + col] = self.at(source, col).clone();
+            }
+        }
+        out
+    }
+
     /// The transpose.
     #[must_use]
     pub fn transpose(&self) -> Self {
@@ -408,6 +424,16 @@ mod tests {
         let syntonic = [Z::from(-4), Z::from(4), Z::from(-1)];
         assert_eq!(val.apply(&syntonic).unwrap(), vec![Z::from(0)]);
         assert!(val.apply(&syntonic[..2]).is_err());
+    }
+
+    #[test]
+    fn reverse_rows_is_an_involution() {
+        let m = IntMatrix::from_rows([[1i64, 2], [3, 4], [5, 6]]).unwrap();
+        assert_eq!(
+            m.reverse_rows(),
+            IntMatrix::from_rows([[5i64, 6], [3, 4], [1, 2]]).unwrap()
+        );
+        assert_eq!(m.reverse_rows().reverse_rows(), m);
     }
 
     #[test]

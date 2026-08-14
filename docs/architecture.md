@@ -32,9 +32,11 @@ src/
     monzo.rs              Monzo with basis-checked arithmetic
     valuation.rs          PositiveQ, PositiveFinite, RealValuation
   temperament/
-    map.rs                RawTemperamentMap, TemperamentMap
+    map.rs                RawTemperamentMap, TemperamentMap, exact preimages
     image.rs              LatticeId, AmbientLattice/Elem, ImageLattice/Elem
     kernel.rs             KernelLattice/Elem, saturation policy and report
+    splitting.rs          HomomorphicSplit, LinearSplit
+    representative.rs     RepresentativePolicy, LiftDecision, StructuralLens
     edo.rs                PatentVal, Exactness
   realization/
     provenance.rs         ProvenanceId
@@ -52,15 +54,13 @@ the general machinery that are meaningful only because the ambient rank is 1;
 
 Following the staging of the implementation prompt, in order:
 
-1. `temperament/splitting.rs`, `representative.rs` - `HomomorphicSplit` and
-   `RepresentativePolicy`, kept as separate traits, with `LiftDecision` and
-   exact kernel residues carried as `KernelElem`. This is what completes
-   fixtures F4, F6, and F7.
-2. `proportion/complexity.rs` - `group_length`, `lattice_seminorm`,
-   `lattice_norm`, `cost` as distinct declared profiles (F5, F34).
-3. Unit equivalence as a constructed quotient (UMT-3.2 section 1.9), which
+1. `proportion/complexity.rs` - `group_length`, `lattice_seminorm`,
+   `lattice_norm`, `cost` as distinct declared profiles (F5, F34). This also
+   unlocks a genuine minimum-complexity representative policy, which is the
+   thing musicians actually want from detempering.
+2. Unit equivalence as a constructed quotient (UMT-3.2 section 1.9), which
    completes F3 and F22.
-4. `pitch/`, then `time/`, then `score/`, then `realization/`, then the native
+3. `pitch/`, then `time/`, then `score/`, then `realization/`, then the native
    container in `io/`.
 
 ## Why the normal forms are what they are

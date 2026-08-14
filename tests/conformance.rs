@@ -12,7 +12,10 @@ use std::sync::Arc;
 
 use umt::algebra::lattice::Sublattice;
 use umt::error::TemperamentError;
-use umt::temperament::{AmbientLattice, KernelLattice, SaturationPolicy, TemperamentMap};
+use umt::temperament::{
+    AmbientLattice, HomomorphicSplit, KernelLattice, LinearSplit, OffsetPolicy,
+    RepresentativePolicy, SaturationPolicy, SplitPolicy, StructuralLens, TemperamentMap,
+};
 use umt::{Basis, IntMatrix, PatentVal, RoundingConvention, Z};
 
 const NEAREST: RoundingConvention = RoundingConvention::NearestHalfAwayFromZero;
@@ -135,17 +138,14 @@ fn f03_twelve_edo_quotient_partial() {
     assert_eq!(map.apply(&octave).unwrap().coordinates(), &[Z::from(12)]);
 }
 
-/// F4 - 6-EDO image (partial).
+/// F4 - 6-EDO image.
 ///
-/// Covered here: the ambient step lattice `Gamma = Z` and the mapped image
-/// `H = 2Z` are separately represented, and an odd ambient step is rejected
-/// rather than assigned an image coordinate.
-///
-/// Not covered yet: detempering itself. Once a representative policy exists,
-/// the remaining obligation is that its domain is `H`, so no lift is even
-/// requestable for an odd step.
+/// The ambient step lattice `Gamma = Z` and the mapped image `H = 2Z` are
+/// separately represented, and detempering is defined only on `H`: an odd
+/// ambient step cannot even be turned into a class to ask a policy about, so
+/// there is no automatic L1 detempering for it.
 #[test]
-fn f04_6edo_image_partial() {
+fn f04_6edo_image() {
     let basis = five_limit();
     let val = PatentVal::new(&basis, 6, NEAREST).unwrap();
 
@@ -185,6 +185,139 @@ fn f04_6edo_image_partial() {
         assert_eq!(coordinate, Z::from(even / 2));
         assert_eq!(val.embed_image(&coordinate).unwrap(), step);
     }
+
+    // Detempering is defined on H, and only on H. A representative policy
+    // takes an `ImageElem`, which an odd ambient step cannot produce, so the
+    // failure happens before any policy is consulted.
+    let map = val.map();
+    let split = LinearSplit::of(map).unwrap();
+    for even in [-4i64, -2, 0, 2, 4, 6] {
+        let class = map
+            .image()
+            .from_ambient(&map.ambient().element([even]).unwrap())
+            .unwrap();
+        let lift = split.split(&class).unwrap();
+        assert_eq!(map.apply(&lift).unwrap().coordinates(), &[Z::from(even)]);
+    }
+    for odd in [-3i64, -1, 1, 3] {
+        assert!(
+            map.image()
+                .from_ambient(&map.ambient().element([odd]).unwrap())
+                .is_err(),
+            "an odd step is not a class, so no lift can be requested for it"
+        );
+    }
+}
+
+/// F6 - nonhomomorphic representative policy.
+///
+/// A hand-coded right inverse that violates additivity must still satisfy the
+/// right-inverse and lens laws, must not claim homomorphism, and must not have
+/// a direct-sum decomposition attributed to it.
+#[test]
+fn f06_nonhomomorphic_representative_policy() {
+    let basis = five_limit();
+    let ambient = AmbientLattice::new("umt:edo:12", 1);
+    let map = TemperamentMap::from_rows(&basis, &ambient, [[12i64, 19, 28]]).unwrap();
+    let kernel = map.kernel().clone();
+
+    // Deliberately non-additive: shift the lift of every odd class.
+    let policy = OffsetPolicy::new(
+        SplitPolicy::new(LinearSplit::of(&map).unwrap()),
+        move |class: &umt::temperament::ImageElem, _: &()| {
+            if (&class.coordinates()[0] % 2i32) != Z::from(0) {
+                kernel.element([1, 0]).ok()
+            } else {
+                None
+            }
+        },
+    );
+
+    // Right-inverse law: holds for every class.
+    for coordinate in -8i64..=8 {
+        let class = map.image().element([coordinate]).unwrap();
+        let decision = policy.choose(&class, &()).unwrap();
+        assert_eq!(map.apply_to_image(&decision.lift).unwrap(), class);
+    }
+
+    // Homomorphism law: fails, and is not claimed.
+    assert!(!policy.claims_homomorphic());
+    let one = map.image().element([1i64]).unwrap();
+    let two = map.image().element([2i64]).unwrap();
+    let lift = |class| policy.choose(class, &()).unwrap().lift;
+    assert_ne!(
+        lift(&two),
+        lift(&one).checked_add(&lift(&one)).unwrap(),
+        "this policy must not be additive"
+    );
+
+    // Lens laws: hold anyway, because they hold for any right inverse.
+    let lens = StructuralLens::new(policy);
+    let monzo = basis.monzo([-1, 1, 0]).unwrap();
+    let class = lens.get(&monzo).unwrap();
+    assert_eq!(lens.put(&monzo, &class, &()).unwrap(), monzo, "GetPut");
+
+    let target = map.image().element([3i64]).unwrap();
+    let put = lens.put(&monzo, &target, &()).unwrap();
+    assert_eq!(lens.get(&put).unwrap(), target, "PutGet");
+    assert_eq!(
+        lens.put(&put, &target, &()).unwrap(),
+        lens.put(&monzo, &target, &()).unwrap(),
+        "PutPut"
+    );
+
+    // The direct-sum decomposition belongs to homomorphic splittings only.
+    // `OffsetPolicy` is not a `HomomorphicSplit`, so it cannot be passed
+    // anywhere one is required; the split it wraps can.
+    let honest = SplitPolicy::new(LinearSplit::of(&map).unwrap());
+    assert!(RepresentativePolicy::<()>::claims_homomorphic(&honest));
+}
+
+/// F7 - enharmonic spelling.
+///
+/// Two exact L1 objects that map to the same 12-EDO class stay distinct, and
+/// their comma residues relative to the same policy differ by exactly the
+/// comma that separates them.
+#[test]
+fn f07_enharmonic_spelling() {
+    let basis = five_limit();
+    let ambient = AmbientLattice::new("umt:edo:12", 1);
+    let map = TemperamentMap::from_rows(&basis, &ambient, [[12i64, 19, 28]]).unwrap();
+    let lens = StructuralLens::new(SplitPolicy::new(LinearSplit::of(&map).unwrap()));
+
+    // The just fifth, and the same fifth raised by a syntonic comma.
+    let fifth = basis.monzo([-1, 1, 0]).unwrap();
+    let comma = basis.monzo([-4, 4, -1]).unwrap();
+    let wide_fifth = fifth.checked_add(&comma).unwrap();
+
+    // Distinct L1 objects with distinct exact ratios.
+    assert_ne!(fifth, wide_fifth);
+    assert_eq!(fifth.exact_ratio().unwrap().to_string(), "3/2");
+    assert_eq!(wide_fifth.exact_ratio().unwrap().to_string(), "243/160");
+
+    // Equal L2 class.
+    assert_eq!(
+        lens.get(&fifth).unwrap(),
+        lens.get(&wide_fifth).unwrap(),
+        "both spellings sound as 7 steps of 12-EDO"
+    );
+    assert_eq!(map.apply(&fifth).unwrap().coordinates(), &[Z::from(7)]);
+
+    // Distinct exact comma residues, differing by exactly the comma.
+    let plain = lens.residue(&fifth, &()).unwrap();
+    let wide = lens.residue(&wide_fifth, &()).unwrap();
+    assert_ne!(plain, wide);
+
+    let difference = map
+        .kernel()
+        .embed(&wide)
+        .unwrap()
+        .checked_sub(&map.kernel().embed(&plain).unwrap())
+        .unwrap();
+    assert_eq!(difference, comma, "the residues differ by the comma itself");
+
+    // The residue is an exact kernel element, not a real deviation.
+    assert!(map.kills(&map.kernel().embed(&wide).unwrap()).unwrap());
 }
 
 /// F22 - reachable versus ambient octave classes (partial).

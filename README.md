@@ -10,10 +10,11 @@ choice made explicit.
 Early. Implemented: the exact proportion core, exact integer matrices with
 Smith and canonical Hermite normal forms, free lattices, regular temperament
 mappings with their image and kernel lattices, comma-subgroup saturation
-validation, and equal divisions. Not implemented: representative policies and
-splittings, complexity profiles, pitch, time, score, realization, and the
-native container. See `docs/architecture.md` for the staging plan and
-`docs/conformance.md` for which UMT-3.2 fixtures are covered.
+validation, equal divisions, homomorphic splittings, representative policies,
+and the structural quotient lens. Not implemented: complexity profiles, pitch,
+time, score, realization, and the native container. See `docs/architecture.md`
+for the staging plan and `docs/conformance.md` for which UMT-3.2 fixtures are
+covered.
 
 This crate does not yet claim UMT-3.2 conformance. Conformance is claimed only
 when the applicable mandatory fixture suite passes.
@@ -50,6 +51,34 @@ let kernel = twelve.map().kernel();
 assert_eq!(kernel.rank(), 2);
 assert!(kernel.is_saturated());
 assert!(kernel.contains(&syntonic)?);
+# Ok::<(), Box<dyn core::error::Error>>(())
+```
+
+The same sounding class, lifted differently in different contexts, with the
+difference reported as an exact comma rather than a floating-point deviation:
+
+```rust
+use umt::temperament::{
+    AmbientLattice, CanonicalLiftPolicy, OffsetPolicy, RepresentativePolicy, TemperamentMap,
+};
+use umt::Basis;
+
+let basis = Basis::primes("umt:prime:2.3.5", &[2, 3, 5])?;
+let steps = AmbientLattice::new("umt:edo:12", 1);
+let map = TemperamentMap::from_rows(&basis, &steps, [[12i64, 19, 28]])?;
+
+let syntonic = map.kernel().coordinates(&basis.monzo([-4, 4, -1])?)?.unwrap();
+let policy = OffsetPolicy::new(
+    CanonicalLiftPolicy::new(map.clone()),
+    move |_class: &_, wide: &bool| if *wide { Some(syntonic.clone()) } else { None },
+);
+
+let class = map.apply_to_image(&basis.monzo([-1, 1, 0])?)?;
+assert_eq!(policy.choose(&class, &false)?.lift.exact_ratio()?.to_string(), "3/2");
+assert_eq!(policy.choose(&class, &true)?.lift.exact_ratio()?.to_string(), "243/160");
+
+// An adaptive policy is not additive, and never claims to be.
+assert!(!policy.claims_homomorphic());
 # Ok::<(), Box<dyn core::error::Error>>(())
 ```
 

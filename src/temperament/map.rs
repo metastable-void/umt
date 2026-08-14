@@ -7,6 +7,9 @@
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
+use num_integer::Integer;
+use num_traits::Zero;
+
 use crate::algebra::Z;
 use crate::algebra::lattice::Sublattice;
 use crate::algebra::matrix::IntMatrix;
@@ -72,7 +75,7 @@ pub struct TemperamentMap {
     domain: Arc<Basis>,
     ambient: Arc<AmbientLattice>,
     matrix: IntMatrix,
-    invariant_factors: Vec<Z>,
+    smith: SmithNormalForm,
     image: Arc<ImageLattice>,
     kernel: Arc<KernelLattice>,
 }
@@ -117,7 +120,7 @@ impl TemperamentMap {
             domain,
             ambient,
             matrix,
-            invariant_factors: smith.invariant_factors().to_vec(),
+            smith,
             image,
             kernel,
         })
@@ -168,7 +171,18 @@ impl TemperamentMap {
     /// The rank of the mapping, equal to the rank of its image.
     #[must_use]
     pub fn rank(&self) -> usize {
-        self.invariant_factors.len()
+        self.smith.rank()
+    }
+
+    /// The Smith normal form of the mapping matrix, computed at construction.
+    ///
+    /// Exposed because exact preimage solving and homomorphic splittings are
+    /// built from it. Its transformation matrices are not canonical, so
+    /// nothing that must be reproducible should depend on them; the invariant
+    /// factors and rank are canonical and are exposed directly.
+    #[must_use]
+    pub fn smith(&self) -> &SmithNormalForm {
+        &self.smith
     }
 
     /// The invariant factors of the mapping matrix.
@@ -180,7 +194,7 @@ impl TemperamentMap {
     /// which is automatic.
     #[must_use]
     pub fn invariant_factors(&self) -> &[Z] {
-        &self.invariant_factors
+        self.smith.invariant_factors()
     }
 
     /// The reachable image `H = im(V)`.
@@ -230,6 +244,64 @@ impl TemperamentMap {
     pub fn apply_to_image(&self, monzo: &Monzo) -> Result<ImageElem, TemperamentError> {
         let ambient = self.apply(monzo)?;
         self.image.from_ambient(&ambient)
+    }
+
+    /// The canonical exact preimage of an ambient element.
+    ///
+    /// This solves `V(m) = target` over the integers. The solution is not
+    /// unique - every element of `m + K` is also a preimage - so the result is
+    /// reduced to the canonical representative of that coset under
+    /// [`crate::algebra::Sublattice::reduce_reversed`], which makes it
+    /// independent of the non-canonical Smith transformation matrices used to
+    /// find it and keeps the high-generator exponents small. For 12-EDO over
+    /// the 5-limit basis, the class of seven steps comes back as `3/2`.
+    ///
+    /// Canonical is not the same as musically preferred. This is the lift that
+    /// falls out of the arithmetic, not a spelling: choosing among the fiber on
+    /// purpose is what a [`crate::temperament::RepresentativePolicy`] is for.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TemperamentError::NotInImage`] if the target is unreachable,
+    /// and [`TemperamentError::AmbientMismatch`] if it belongs to a different
+    /// ambient lattice.
+    pub fn preimage(&self, target: &AmbientElem) -> Result<Monzo, TemperamentError> {
+        if !self.ambient.same_identity(target.lattice()) {
+            return Err(TemperamentError::AmbientMismatch {
+                expected: self.ambient.id().clone(),
+                found: target.lattice().id().clone(),
+            });
+        }
+
+        // With `U A V = D`, solving `A p = b` means solving `D z = U b` and
+        // taking `p = V z`.
+        let transformed = self.smith.left().apply(target.coordinates())?;
+        let factors = self.smith.invariant_factors();
+        let rank = factors.len();
+
+        let mut solution = Vec::with_capacity(self.matrix.cols());
+        for (index, factor) in factors.iter().enumerate() {
+            let (quotient, remainder) = transformed[index].div_rem(factor);
+            if !remainder.is_zero() {
+                return Err(TemperamentError::NotInImage {
+                    coordinates: target.coordinates().to_vec(),
+                });
+            }
+            solution.push(quotient);
+        }
+        for value in &transformed[rank..] {
+            if !value.is_zero() {
+                return Err(TemperamentError::NotInImage {
+                    coordinates: target.coordinates().to_vec(),
+                });
+            }
+        }
+        solution.resize(self.matrix.cols(), Z::zero());
+
+        let exponents = self.smith.right().apply(&solution)?;
+        let reduced = self.kernel.sublattice().reduce_reversed(&exponents)?;
+        Ok(Monzo::new(Arc::clone(&self.domain), reduced)
+            .expect("invariant: the solution has one entry per basis generator"))
     }
 
     /// Whether a monzo is tempered out, that is, lies in the kernel.
@@ -327,6 +399,52 @@ mod tests {
         assert!(matches!(
             map.apply(&other.monzo([1, 0, 0]).unwrap()),
             Err(TemperamentError::BasisMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn preimages_are_canonical_and_small() {
+        let basis = five_limit();
+        let steps = AmbientLattice::new("umt:edo:12", 1);
+        let map = TemperamentMap::from_rows(&basis, &steps, [[12i64, 19, 28]]).unwrap();
+
+        // The class of seven steps comes back as the just fifth, not as some
+        // enormous other member of the same fiber.
+        let seven = map.ambient().element([7i64]).unwrap();
+        let lift = map.preimage(&seven).unwrap();
+        assert_eq!(lift, basis.monzo([-1, 1, 0]).unwrap());
+        assert_eq!(lift.exact_ratio().unwrap().to_string(), "3/2");
+
+        // Every preimage maps back, and the choice depends only on the coset.
+        for step in [-13i64, -1, 0, 5, 12, 29] {
+            let target = map.ambient().element([step]).unwrap();
+            let lift = map.preimage(&target).unwrap();
+            assert_eq!(map.apply(&lift).unwrap(), target);
+
+            // Shifting by a comma does not change the preimage of the class.
+            let shifted = lift
+                .checked_add(&basis.monzo([-4, 4, -1]).unwrap())
+                .unwrap();
+            assert_eq!(map.preimage(&map.apply(&shifted).unwrap()).unwrap(), lift);
+        }
+    }
+
+    #[test]
+    fn preimages_of_unreachable_elements_are_rejected() {
+        let basis = five_limit();
+        let steps = AmbientLattice::new("umt:edo:6", 1);
+        let map = TemperamentMap::from_rows(&basis, &steps, [[6i64, 10, 14]]).unwrap();
+
+        assert!(map.preimage(&steps.element([4i64]).unwrap()).is_ok());
+        assert!(matches!(
+            map.preimage(&steps.element([3i64]).unwrap()),
+            Err(TemperamentError::NotInImage { .. })
+        ));
+
+        let foreign = AmbientLattice::new("umt:other", 1);
+        assert!(matches!(
+            map.preimage(&foreign.element([0i64]).unwrap()),
+            Err(TemperamentError::AmbientMismatch { .. })
         ));
     }
 

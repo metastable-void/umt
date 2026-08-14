@@ -153,6 +153,64 @@ impl Sublattice {
         }
     }
 
+    /// The canonical representative of the coset `point + L`.
+    ///
+    /// Every coset has exactly one representative whose coordinate at each
+    /// pivot row lies in `[0, pivot)`, so this decides coset equality: two
+    /// points lie in the same coset exactly when their reductions are equal.
+    /// It is also what keeps derived representatives small - an unreduced
+    /// solution of a linear system can be enormous while representing the same
+    /// coset.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MatrixError::DimensionMismatch`] if the point does not have
+    /// `ambient_rank` entries.
+    pub fn reduce(&self, point: &[Z]) -> Result<Vec<Z>, MatrixError> {
+        if point.len() != self.ambient_rank {
+            return Err(MatrixError::DimensionMismatch {
+                left: self.ambient_rank,
+                right: point.len(),
+            });
+        }
+        let mut reduced = point.to_vec();
+        for (column, (row, _)) in self.pivots.iter().enumerate() {
+            let quotient = reduced[*row].div_floor(self.basis.at(*row, column));
+            if quotient.is_zero() {
+                continue;
+            }
+            for (target, entry) in reduced.iter_mut().enumerate() {
+                *entry -= self.basis.at(target, column) * &quotient;
+            }
+        }
+        Ok(reduced)
+    }
+
+    /// The canonical representative of the coset `point + L`, eliminating from
+    /// the *last* coordinate downwards.
+    ///
+    /// Same guarantee as [`Sublattice::reduce`] - one representative per
+    /// coset, deterministic - but with the coordinate order reversed, so the
+    /// exponents of the later generators are the ones driven into
+    /// `[0, pivot)`.
+    ///
+    /// For a prime basis this is usually the one wanted: the later generators
+    /// are the arithmetically complex ones, so keeping *their* exponents small
+    /// produces representatives a musician recognizes. Reducing the 12-EDO
+    /// fifth class from the front yields a twenty-digit ratio; reducing it
+    /// from the back yields `3/2`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MatrixError::DimensionMismatch`] if the point does not have
+    /// `ambient_rank` entries.
+    pub fn reduce_reversed(&self, point: &[Z]) -> Result<Vec<Z>, MatrixError> {
+        let reversed = Self::from_generators(self.ambient_rank, &self.basis.reverse_rows())?;
+        let flipped: Vec<Z> = point.iter().rev().cloned().collect();
+        let reduced = reversed.reduce(&flipped)?;
+        Ok(reduced.into_iter().rev().collect())
+    }
+
     /// Whether an ambient point lies in this sublattice.
     ///
     /// # Errors
@@ -259,6 +317,46 @@ mod tests {
         assert!(full.is_full());
         assert!(full.contains(&z(&[5, -7, 11])).unwrap());
         assert!(full.is_saturated());
+    }
+
+    #[test]
+    fn reduction_gives_canonical_coset_representatives() {
+        let lattice =
+            Sublattice::from_generators(2, &IntMatrix::from_rows([[3i64, 0], [0, 5]]).unwrap())
+                .unwrap();
+
+        // Same coset, same reduction.
+        assert_eq!(lattice.reduce(&z(&[7, 12])).unwrap(), z(&[1, 2]));
+        assert_eq!(lattice.reduce(&z(&[-2, -3])).unwrap(), z(&[1, 2]));
+        assert_eq!(lattice.reduce(&z(&[1, 2])).unwrap(), z(&[1, 2]));
+
+        // Different cosets, different reductions.
+        assert_ne!(
+            lattice.reduce(&z(&[1, 2])).unwrap(),
+            lattice.reduce(&z(&[2, 2])).unwrap()
+        );
+
+        // Members of the lattice reduce to zero.
+        assert_eq!(lattice.reduce(&z(&[6, -10])).unwrap(), z(&[0, 0]));
+
+        // The difference is always in the lattice, and reduction is
+        // idempotent.
+        for point in [z(&[17, -23]), z(&[0, 1]), z(&[-100, 100])] {
+            let reduced = lattice.reduce(&point).unwrap();
+            let difference: alloc::vec::Vec<Z> =
+                point.iter().zip(&reduced).map(|(a, b)| a - b).collect();
+            assert!(lattice.contains(&difference).unwrap());
+            assert_eq!(lattice.reduce(&reduced).unwrap(), reduced);
+        }
+    }
+
+    #[test]
+    fn reduction_in_a_rank_deficient_lattice_leaves_free_coordinates_alone() {
+        // Only the first coordinate is constrained.
+        let lattice =
+            Sublattice::from_generators(2, &IntMatrix::from_rows([[4i64], [0]]).unwrap()).unwrap();
+        assert_eq!(lattice.reduce(&z(&[9, 7])).unwrap(), z(&[1, 7]));
+        assert_eq!(lattice.reduce(&z(&[-1, -7])).unwrap(), z(&[3, -7]));
     }
 
     #[test]

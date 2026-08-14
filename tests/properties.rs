@@ -10,7 +10,10 @@ use std::sync::Arc;
 use proptest::prelude::*;
 use umt::algebra::integer::round_n_log2;
 use umt::algebra::normal_form::{HermiteNormalForm, SmithNormalForm};
-use umt::temperament::{AmbientLattice, TemperamentMap};
+use umt::temperament::{
+    AmbientLattice, HomomorphicSplit, KernelElem, LinearSplit, OffsetPolicy, RepresentativePolicy,
+    SplitPolicy, StructuralLens, TemperamentMap,
+};
 use umt::{Basis, IntMatrix, PatentVal, RoundingConvention, Sublattice, Z};
 
 fn five_limit() -> Arc<Basis> {
@@ -41,6 +44,56 @@ fn five_limit_map(entries: [i64; 3]) -> TemperamentMap {
         [entries],
     )
     .expect("shape matches the basis rank")
+}
+
+/// A spread of 5-limit mappings: surjective, non-surjective, rank 2, and the
+/// zero map, so the policy laws are exercised on every degenerate shape too.
+fn sample_maps() -> Vec<TemperamentMap> {
+    let basis = five_limit();
+    vec![
+        five_limit_map([12, 19, 28]),
+        five_limit_map([6, 10, 14]),
+        five_limit_map([0, 0, 0]),
+        TemperamentMap::from_rows(
+            &basis,
+            &AmbientLattice::new("umt:property-rank2", 2),
+            [[1i64, 0, -4], [0, 1, 4]],
+        )
+        .expect("shape matches the basis rank"),
+    ]
+}
+
+/// A class of `map` built from as many of `coordinates` as its image needs.
+fn class_of(map: &TemperamentMap, coordinates: &[i64]) -> umt::temperament::ImageElem {
+    map.image()
+        .element(coordinates[..map.image().rank()].to_vec())
+        .expect("coordinate count matches the image rank")
+}
+
+/// A policy that shifts the lift of every odd-summed class by the first kernel
+/// generator, which is a right inverse but not additive.
+fn shifting_policy(
+    map: &TemperamentMap,
+) -> OffsetPolicy<
+    SplitPolicy<LinearSplit>,
+    impl Fn(&umt::temperament::ImageElem, &()) -> Option<KernelElem>,
+> {
+    let kernel = map.kernel().clone();
+    OffsetPolicy::new(
+        SplitPolicy::new(LinearSplit::of(map).expect("a validated mapping splits")),
+        move |class: &umt::temperament::ImageElem, _: &()| {
+            if kernel.rank() == 0 {
+                return None;
+            }
+            let parity: Z = class.coordinates().iter().sum();
+            if (&parity % 2i32) == Z::from(0) {
+                return None;
+            }
+            let mut offset = vec![Z::from(0); kernel.rank()];
+            offset[0] = Z::from(1);
+            kernel.element(offset).ok()
+        },
+    )
 }
 
 /// Compares `numer / denom` with `2^exponent` using plain integer arithmetic,
@@ -191,6 +244,94 @@ proptest! {
         prop_assert!(map.image().contains(&ambient).unwrap());
         let image = map.apply_to_image(&monzo).unwrap();
         prop_assert_eq!(map.image().embed(&image).unwrap(), ambient);
+    }
+
+    /// Law P8: every representative policy is a right inverse, homomorphic or
+    /// not, on every mapping shape.
+    #[test]
+    fn p8_right_inverse_law(coordinates in prop::collection::vec(-24i64..=24, 2)) {
+        for map in sample_maps() {
+            let class = class_of(&map, &coordinates);
+
+            let honest = SplitPolicy::new(LinearSplit::of(&map).unwrap());
+            let chosen = honest.choose(&class, &()).unwrap();
+            prop_assert_eq!(map.apply_to_image(&chosen.lift).unwrap(), class.clone());
+            prop_assert!(chosen.residue.is_zero(), "a split is its own reference");
+
+            let shifting = shifting_policy(&map);
+            let chosen = shifting.choose(&class, &()).unwrap();
+            prop_assert_eq!(map.apply_to_image(&chosen.lift).unwrap(), class);
+        }
+    }
+
+    /// Law P9: the residue `m - sigma(V(m))` is an exact kernel element.
+    #[test]
+    fn p9_residue_is_in_the_kernel(exponents in exponents()) {
+        for map in sample_maps() {
+            let monzo = five_limit().monzo(exponents.clone()).unwrap();
+            let lens = StructuralLens::new(shifting_policy(&map));
+            let residue = lens.residue(&monzo, &()).unwrap();
+            let comma = map.kernel().embed(&residue).unwrap();
+            prop_assert!(map.kills(&comma).unwrap());
+            prop_assert!(map.kernel().contains(&comma).unwrap());
+        }
+    }
+
+    /// Law P10: GetPut, PutGet, and PutPut, for a policy that is deliberately
+    /// not a homomorphism.
+    #[test]
+    fn p10_lens_laws(
+        exponents in exponents(),
+        first in prop::collection::vec(-12i64..=12, 2),
+        second in prop::collection::vec(-12i64..=12, 2),
+    ) {
+        for map in sample_maps() {
+            let monzo = five_limit().monzo(exponents.clone()).unwrap();
+            let lens = StructuralLens::new(shifting_policy(&map));
+            let x = class_of(&map, &first);
+            let y = class_of(&map, &second);
+
+            // GetPut.
+            let class = lens.get(&monzo).unwrap();
+            prop_assert_eq!(lens.put(&monzo, &class, &()).unwrap(), monzo.clone());
+
+            // PutGet.
+            let put = lens.put(&monzo, &x, &()).unwrap();
+            prop_assert_eq!(lens.get(&put).unwrap(), x.clone());
+
+            // PutPut.
+            prop_assert_eq!(
+                lens.put(&put, &y, &()).unwrap(),
+                lens.put(&monzo, &y, &()).unwrap()
+            );
+        }
+    }
+
+    /// Law P11: a policy that claims homomorphism really is additive, and one
+    /// that does not claim it is not assumed to be.
+    #[test]
+    fn p11_homomorphism_only_when_claimed(
+        first in prop::collection::vec(-24i64..=24, 2),
+        second in prop::collection::vec(-24i64..=24, 2),
+    ) {
+        for map in sample_maps() {
+            let split = LinearSplit::of(&map).unwrap();
+            let x = class_of(&map, &first);
+            let y = class_of(&map, &second);
+            let sum = x.checked_add(&y).unwrap();
+
+            // The splitting claims additivity, so it must have it.
+            prop_assert!(RepresentativePolicy::<()>::claims_homomorphic(
+                &SplitPolicy::new(split.clone())
+            ));
+            prop_assert_eq!(
+                split.split(&sum).unwrap(),
+                split.split(&x).unwrap().checked_add(&split.split(&y).unwrap()).unwrap()
+            );
+
+            // The shifting policy claims nothing, and nothing is assumed.
+            prop_assert!(!shifting_policy(&map).claims_homomorphic());
+        }
     }
 
     /// Prompt section 10: the Smith normal form reconstructs its input, its

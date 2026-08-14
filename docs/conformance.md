@@ -19,10 +19,10 @@ Status values:
 | F1 | Kernel saturation versus surjectivity, `V = [2]` | pass | `tests/conformance.rs::f01_kernel_saturation_versus_surjectivity` |
 | F2 | Unsaturated direct comma subgroup | pass | `tests/conformance.rs::f02_unsaturated_direct_comma_subgroup` |
 | F3 | 12-EDO quotient | partial | `tests/conformance.rs::f03_twelve_edo_quotient_partial` |
-| F4 | 6-EDO image is `2Z` | partial | `tests/conformance.rs::f04_6edo_image_partial` |
+| F4 | 6-EDO image is `2Z` | pass | `tests/conformance.rs::f04_6edo_image` |
 | F5 | Height with a generator below 1 | pending | needs complexity profiles |
-| F6 | Nonhomomorphic representative policy | pending | needs representative policies |
-| F7 | Enharmonic spelling | pending | needs representative policies and residues |
+| F6 | Nonhomomorphic representative policy | pass | `tests/conformance.rs::f06_nonhomomorphic_representative_policy` |
+| F7 | Enharmonic spelling | pass | `tests/conformance.rs::f07_enharmonic_spelling` |
 | F8 | Unequal voice count | pending | needs chords and voice leading |
 | F9 | Tie round trip | pending | needs the score layer |
 | F10 | 6/8 versus 3/4 | pending | needs meter |
@@ -60,12 +60,6 @@ first isomorphism theorem. What remains is unit equivalence as a constructed
 quotient object: `Z/12Z` is currently asserted as an index computation
 (UMT-3.2 section 1.9).
 
-**F4.** Detempering itself is not implemented, so the fixture's "no automatic
-L1 detempering" clause is asserted in its contrapositive form: an odd ambient
-step is rejected as not in the image. Completing it needs a representative
-policy, at which point the assertion becomes that the policy's domain is `H`,
-so no lift is even requestable.
-
 **F22.** The class counts are derived from the represented image and octave
 image rather than asserted as constants, but the quotient groups themselves
 are not constructed. Same dependency as F3.
@@ -84,12 +78,36 @@ UMT-3.2 section 9.1 and prompt section 47 laws currently exercised, in
 | P5 map-derived kernel saturation | `p5_kernel_saturation_for_nonzero_multiples` |
 | P6 direct-comma validation | `tests/conformance.rs::f02_unsaturated_direct_comma_subgroup` |
 | P7 image distinction | `p7_image_membership_and_round_trip`, `p7_general_image_round_trip` |
+| P8 right-inverse law | `p8_right_inverse_law` |
+| P9 residue law | `p9_residue_is_in_the_kernel` |
+| P10 set-level lens laws | `p10_lens_laws` |
+| P11 linear-splitting declaration | `p11_homomorphism_only_when_claimed` |
 | Basis-mismatch rejection | `basis_mismatch_is_always_rejected` |
 | Normal-form invariants (prompt section 10) | `smith_normal_form_invariants`, `hermite_normal_form_is_canonical`, `sublattice_coordinates_round_trip`, plus the unit tests in `src/algebra/normal_form.rs` |
 | Section 1.6 entry definition | `nearest_entry_satisfies_its_defining_inequality`, `floor_entry_satisfies_its_defining_inequality`, `conventions_are_ordered`, `octave_entry_is_fixed_to_n` |
 
-Laws P8 to P11 (right inverse, residue, lens laws, linear-splitting
-declaration) are the next stage: they constrain representative policies, which
-do not exist yet. The complexity, tuning, torsor, voice-leading, notation,
-rhythm-tree, quantization, tempo-map, and temporal-constraint laws are
-likewise not yet applicable.
+P8 to P11 run against four mapping shapes - surjective, non-surjective, the
+zero map, and rank 2 - so the degenerate cases are covered rather than assumed
+away.
+
+The complexity, tuning, torsor, voice-leading, notation, rhythm-tree,
+quantization, tempo-map, and temporal-constraint laws are not yet applicable:
+the structures they constrain do not exist.
+
+## Examples
+
+Prompt section 49 requires executable examples. Three of the six are possible
+at this stage:
+
+| Example | Subject | File |
+|---|---|---|
+| 1 | 12-EDO temperament end to end | `examples/temperament_12edo.rs` |
+| 2 | 6-EDO image distinction | `examples/temperament_6edo_image.rs` |
+| 3 | Adaptive lift selection | `examples/adaptive_lift.rs` |
+| 4 | Quintuplet quantization | pending, needs the time layer |
+| 5 | Unmeasured event | pending, needs temporal constraints |
+| 6 | Performance compilation | pending, needs the device layer |
+
+Example 1 stops short of the regular tuning its prompt text mentions, because
+tuning is an L3 map and belongs to a later stage; everything else in it is
+exact.

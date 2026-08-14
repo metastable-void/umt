@@ -18,7 +18,7 @@ use alloc::vec::Vec;
 use crate::algebra::Z;
 use crate::algebra::lattice::Sublattice;
 use crate::algebra::matrix::IntMatrix;
-use crate::algebra::normal_form::SmithNormalForm;
+use crate::algebra::normal_form::{HermiteNormalForm, SmithNormalForm};
 use crate::error::TemperamentError;
 use crate::proportion::basis::Basis;
 use crate::proportion::monzo::Monzo;
@@ -218,6 +218,46 @@ impl KernelLattice {
             .collect()
     }
 
+    /// A presentation basis intended for reading, as columns.
+    ///
+    /// Same subgroup, different basis. [`KernelLattice::basis`] pivots on the
+    /// first coordinate, which for a prime basis is the octave, and that
+    /// pushes the higher-prime exponents up: the 12-EDO kernel comes out as
+    /// `[1 20 -14>` and `[0 28 -19>`, which are correct and unrecognizable.
+    /// This runs the same normal form with the coordinate order reversed, so
+    /// the pivots eliminate the *highest* generator first and the result looks
+    /// like the commas a musician would name - for 12-EDO, one comma free of
+    /// the prime 5 and one that is the syntonic comma up to sign.
+    ///
+    /// This is presentation only. It is not canonical, it must not be used for
+    /// equality or serialization, and it is not a claim that these are the
+    /// simplest commas: that would need a declared complexity function and a
+    /// reduction against it.
+    #[must_use]
+    pub fn comma_basis(&self) -> IntMatrix {
+        let reversed = self.basis().reverse_rows();
+        HermiteNormalForm::column_of(&reversed)
+            .basis()
+            .reverse_rows()
+    }
+
+    /// The presentation basis as monzos.
+    ///
+    /// See [`KernelLattice::comma_basis`]: for reading, not for identity.
+    #[must_use]
+    pub fn comma_basis_monzos(&self) -> Vec<Monzo> {
+        let basis = self.comma_basis();
+        (0..basis.cols())
+            .map(|column| {
+                let coordinates = basis
+                    .column(column)
+                    .expect("invariant: column index is in range");
+                Monzo::new(Arc::clone(&self.domain), coordinates)
+                    .expect("invariant: comma basis columns have domain rank")
+            })
+            .collect()
+    }
+
     /// Whether this subgroup is saturated in the domain lattice.
     #[must_use]
     pub fn is_saturated(&self) -> bool {
@@ -330,6 +370,32 @@ impl KernelElem {
     pub fn is_zero(&self) -> bool {
         self.coordinates.iter().all(num_traits::Zero::is_zero)
     }
+
+    /// Group addition of comma residues.
+    ///
+    /// Residues of the *same* kind, in the same kernel, do add: they are
+    /// elements of one abelian group. This is not the forbidden addition
+    /// across residual variants of UMT-3.2 section 7.9, which mixes
+    /// incompatible spaces.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TemperamentError::KernelMismatch`] if the operands belong to
+    /// different kernel lattices.
+    pub fn checked_add(&self, other: &Self) -> Result<Self, TemperamentError> {
+        if !Arc::ptr_eq(&self.lattice, &other.lattice) && *self.lattice != *other.lattice {
+            return Err(TemperamentError::KernelMismatch);
+        }
+        Ok(Self {
+            lattice: Arc::clone(&self.lattice),
+            coordinates: self
+                .coordinates
+                .iter()
+                .zip(&other.coordinates)
+                .map(|(a, b)| a + b)
+                .collect(),
+        })
+    }
 }
 
 impl PartialEq for KernelElem {
@@ -393,6 +459,44 @@ mod tests {
             assert!(report.torsion_invariants.is_empty());
             assert_eq!(kernel.rank(), 1);
         }
+    }
+
+    #[test]
+    fn the_presentation_basis_shows_recognizable_commas() {
+        use crate::temperament::image::AmbientLattice;
+        use crate::temperament::map::TemperamentMap;
+
+        let basis = Basis::primes("umt:prime:2.3.5", &[2, 3, 5]).unwrap();
+        let steps = AmbientLattice::new("umt:edo:12", 1);
+        let map = TemperamentMap::from_rows(&basis, &steps, [[12i64, 19, 28]]).unwrap();
+        let kernel = map.kernel();
+
+        let commas = kernel.comma_basis_monzos();
+        assert_eq!(commas.len(), 2);
+
+        // The Pythagorean comma, free of the prime 5, and the schisma.
+        assert!(commas.contains(&basis.monzo([-19, 12, 0]).unwrap()));
+        assert!(commas.contains(&basis.monzo([-15, 8, 1]).unwrap()));
+
+        // Both are small intervals, which is the point of the presentation
+        // basis: the canonical basis of the same subgroup is not.
+        for comma in &commas {
+            let cents = comma.log2_valuation_f64().unwrap().abs() * 1200.0;
+            assert!(cents < 25.0, "{comma} is {cents} cents");
+        }
+        let canonical_sizes: alloc::vec::Vec<f64> = kernel
+            .basis_monzos()
+            .iter()
+            .map(|comma| comma.log2_valuation_f64().unwrap().abs() * 1200.0)
+            .collect();
+        assert!(
+            canonical_sizes.iter().all(|cents| *cents > 200.0),
+            "the canonical basis is correct but unreadable: {canonical_sizes:?}"
+        );
+
+        // Same subgroup either way.
+        let from_presentation = KernelLattice::of_map(&basis, &kernel.comma_basis()).unwrap();
+        assert_eq!(&from_presentation, kernel);
     }
 
     #[test]
