@@ -76,6 +76,62 @@ impl ComplexityProfile {
     }
 }
 
+/// The value of a complexity function, exact where the function is exact.
+///
+/// UMT layer: L1 when [`ComplexityValue::Exact`], L3 when
+/// [`ComplexityValue::Real`]. The distinction is preserved rather than
+/// flattened to `f64`, so an exact comparison stays exact and a real one is
+/// visibly real.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub enum ComplexityValue {
+    /// An exact rational value.
+    Exact(Q),
+    /// An L3 real observation.
+    Real(f64),
+}
+
+impl ComplexityValue {
+    /// The value as a real number.
+    #[must_use]
+    pub fn as_f64(&self) -> f64 {
+        match self {
+            Self::Exact(value) => ratio_to_f64(value.numer(), value.denom())
+                .expect("invariant: an exact value has a nonzero denominator"),
+            Self::Real(value) => *value,
+        }
+    }
+
+    /// The exact value, if this is one.
+    #[must_use]
+    pub fn exact(&self) -> Option<&Q> {
+        match self {
+            Self::Exact(value) => Some(value),
+            Self::Real(_) => None,
+        }
+    }
+}
+
+impl PartialEq for ComplexityValue {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Exact(left), Self::Exact(right)) => left == right,
+            _ => self.as_f64() == other.as_f64(),
+        }
+    }
+}
+
+impl PartialOrd for ComplexityValue {
+    /// Exact values compare exactly; anything involving a real value compares
+    /// as reals, which is the honest weaker answer.
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        match (self, other) {
+            (Self::Exact(left), Self::Exact(right)) => Some(left.cmp(right)),
+            _ => self.as_f64().partial_cmp(&other.as_f64()),
+        }
+    }
+}
+
 /// A declared complexity function on a proportion lattice.
 ///
 /// UMT layer: L3 for the value, L1 for the structure it reads. The value is a
@@ -108,6 +164,33 @@ pub trait Complexity {
         let _ = self.value_f64(monzo)?;
         Ok(None)
     }
+
+    /// The value, exact where this complexity has an exact one.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ComplexityError::BasisMismatch`] if the monzo is over an
+    /// unrelated basis.
+    fn value(&self, monzo: &Monzo) -> Result<ComplexityValue, ComplexityError> {
+        match self.exact_value(monzo)? {
+            Some(exact) => Ok(ComplexityValue::Exact(exact)),
+            None => Ok(ComplexityValue::Real(self.value_f64(monzo)?)),
+        }
+    }
+}
+
+/// A complexity that weights each basis coordinate independently.
+///
+/// Knowing the per-coordinate weights is what makes an exhaustive
+/// minimum-complexity search provable: from `h(m) >= w_i |a_i|` a bounded
+/// search region can be derived, rather than guessed at.
+pub trait CoordinateWeighted: Complexity {
+    /// A positive lower bound on the weight of coordinate `index`.
+    ///
+    /// Returns `None` when the index is out of range or the weight is zero,
+    /// in which case that coordinate is unbounded by this complexity and no
+    /// finite search region exists along it.
+    fn coordinate_weight_f64(&self, index: usize) -> Option<f64>;
 }
 
 fn check_basis(basis: &Arc<Basis>, monzo: &Monzo) -> Result<(), ComplexityError> {
@@ -247,6 +330,17 @@ impl Complexity for WeightedL1 {
     }
 }
 
+impl CoordinateWeighted for WeightedL1 {
+    fn coordinate_weight_f64(&self, index: usize) -> Option<f64> {
+        let weight = self.weights.get(index)?;
+        if weight.is_positive() {
+            ratio_to_f64(weight.numer(), weight.denom())
+        } else {
+            None
+        }
+    }
+}
+
 /// A weighted `l1` complexity with real weights, including Tenney height
 /// (UMT-3.2 section 1.3.2).
 ///
@@ -358,6 +452,12 @@ impl Complexity for LogWeightedL1 {
             total += weight.get() * magnitude;
         }
         Ok(total)
+    }
+}
+
+impl CoordinateWeighted for LogWeightedL1 {
+    fn coordinate_weight_f64(&self, index: usize) -> Option<f64> {
+        self.weights.get(index).map(|weight| weight.get())
     }
 }
 

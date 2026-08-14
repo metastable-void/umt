@@ -93,6 +93,17 @@ impl Sublattice {
         &self.basis
     }
 
+    /// The pivot positions of the canonical basis, as `(row, column)` pairs in
+    /// column order.
+    ///
+    /// Pivot rows strictly increase, the pivot entries are positive, and a
+    /// column has zeros above its own pivot. Search bounds and coordinate
+    /// solving both rely on that structure.
+    #[must_use]
+    pub fn pivots(&self) -> &[(usize, usize)] {
+        &self.pivots
+    }
+
     /// Whether this sublattice is the whole ambient lattice.
     ///
     /// Equal rank is not enough: `2Z` has the rank of `Z` without being `Z`.

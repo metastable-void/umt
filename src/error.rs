@@ -160,7 +160,7 @@ pub enum MonzoError {
 }
 
 /// A theory-context registration or lookup failed.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
 #[non_exhaustive]
 pub enum ContextError {
     /// A referenced basis is not registered.
@@ -210,6 +210,60 @@ pub enum ContextError {
     Monzo(#[from] MonzoError),
 
     /// A resolved mapping failed validation.
+    #[error(transparent)]
+    Temperament(#[from] TemperamentError),
+}
+
+/// A pitch quantity, point, or realization was rejected.
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+#[non_exhaustive]
+pub enum PitchError {
+    /// A metric quantity was not finite.
+    #[error("pitch quantities must be finite")]
+    NonFiniteQuantity,
+
+    /// A frequency was not strictly positive.
+    #[error("a frequency must be positive and finite")]
+    NonPositiveFrequency,
+
+    /// Two pitch points were measured from different origins.
+    ///
+    /// No interval between them is defined: "a fifth above C" and "a fifth
+    /// above D" are different pitches, and nothing in an exponent vector says
+    /// which origin is meant (UMT-3.2 section 1.10).
+    #[error("pitch origin mismatch: `{left}` versus `{right}`")]
+    OriginMismatch {
+        /// Origin of the left point.
+        left: crate::pitch::point::PitchOrigin,
+        /// Origin of the right point.
+        right: crate::pitch::point::PitchOrigin,
+    },
+
+    /// An interval belongs to a different declared L2 interval group.
+    ///
+    /// A tuning of the reachable image is not a tuning of the ambient group,
+    /// and section 1.9 requires the choice to be recorded rather than assumed.
+    #[error("this interval belongs to a different declared interval group")]
+    IntervalGroupMismatch,
+
+    /// A tuning was given the wrong number of generator sizes.
+    #[error("expected {expected} generator sizes, found {found}")]
+    SizeCount {
+        /// Sizes required.
+        expected: usize,
+        /// Sizes supplied.
+        found: usize,
+    },
+
+    /// An underlying monzo operation failed.
+    #[error(transparent)]
+    Monzo(#[from] MonzoError),
+
+    /// An underlying valuation failed.
+    #[error(transparent)]
+    Valuation(#[from] ValuationError),
+
+    /// An underlying temperament operation failed.
     #[error(transparent)]
     Temperament(#[from] TemperamentError),
 }
@@ -274,7 +328,7 @@ pub enum ComplexityError {
 }
 
 /// A temperament mapping, image, or kernel operation was rejected.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
 #[non_exhaustive]
 pub enum TemperamentError {
     /// The mapping matrix does not match the declared domain and ambient
@@ -374,16 +428,28 @@ pub enum TemperamentError {
     #[error(transparent)]
     Matrix(#[from] MatrixError),
 
+    /// A complexity function does not bound a search over a fiber.
+    ///
+    /// A minimum-complexity policy needs a `lattice_norm`: a seminorm has
+    /// nonzero elements of zero cost, so a coset can contain infinitely many
+    /// minimizers and no finite search region exists.
+    #[error("this complexity does not bound the search: a lattice norm is required")]
+    UnboundedComplexity,
+
     /// An underlying monzo operation failed.
     #[error(transparent)]
     Monzo(#[from] MonzoError),
+
+    /// An underlying complexity evaluation failed.
+    #[error(transparent)]
+    Complexity(#[from] ComplexityError),
 }
 
 /// An equal-division mapping could not be constructed.
 ///
 /// Operations on a constructed mapping report [`TemperamentError`]; this type
 /// covers only what can go wrong while deriving the entries.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
 #[non_exhaustive]
 pub enum PatentValError {
     /// A generator's valuation is unusable for an equal-division entry.

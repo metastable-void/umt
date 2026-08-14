@@ -412,7 +412,7 @@ impl<C, P: RepresentativePolicy<C>> StructuralLens<P, C> {
 }
 
 /// A lens operation failed, either structurally or inside the policy.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
 #[non_exhaustive]
 pub enum LensError<E> {
     /// A structural, lattice-level failure.

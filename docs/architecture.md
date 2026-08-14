@@ -34,6 +34,10 @@ src/
     monzo.rs              Monzo with basis-checked arithmetic
     valuation.rs          PositiveQ, PositiveFinite, RealValuation
     complexity.rs         declared complexity profiles, weighted l1, Tenney
+  pitch/
+    units.rs              FrequencyHz, LogFrequency, Octaves, Cents
+    point.rs              PitchOrigin, PitchPoint torsor over any interval type
+    tuning.rs             RegularTuning, PitchRealization, PitchRealizer
   temperament/
     map.rs                RawTemperamentMap, TemperamentMap, exact preimages
     image.rs              LatticeId, AmbientLattice/Elem, ImageLattice/Elem
@@ -41,8 +45,10 @@ src/
     splitting.rs          HomomorphicSplit, LinearSplit
     representative.rs     RepresentativePolicy, LiftDecision, StructuralLens
     unit.rs               UnitEquivalence on the ambient or reachable group
+    minimum_complexity.rs provably bounded minimum-complexity lift search
     edo.rs                PatentVal, Exactness
   realization/
+    optimization.rs       OptimizationOutcome, ApproximationGuarantee
     provenance.rs         ProvenanceId
   io/
     text.rs               canonical exact-value text codec
@@ -59,14 +65,16 @@ the general machinery that are meaningful only because the ambient rank is 1;
 
 Following the staging of the implementation prompt, in order:
 
-1. A minimum-complexity representative policy, now that complexity profiles
-   exist to define what "simplest" means. This is what makes detempering
-   produce spellings a musician would write.
-2. `pitch/` - interval and point torsors, references, regular tuning,
-   non-regular realization, trajectories, chords, voice leading.
-3. `time/` - exact durations, rhythm trees, meter and grouping, tempo maps,
-   quantizers, temporal constraint networks. The largest single stage.
-4. `score/`, then `realization/`, then the native container in `io/`.
+1. The rest of `pitch/`: trajectories (section 4.7, F20), chords with voice
+   identity (4.3), and voice leading as a span with declared costs (4.4, F8).
+2. `time/` - exact durations, rhythm trees, meter and grouping, tempo maps,
+   quantizers, temporal constraint networks. The largest single stage, and the
+   one that closes the most fixtures: F10 to F18, F25, F27, F32.
+3. `score/` - scoped events, temporal placement, ties, event relations (F9,
+   F23, F24).
+4. The rest of `realization/` - residual taxonomy, realization records, the
+   compiled performance-plan boundary.
+5. The native container in `io/` (F29), then external adapters (F19, F21).
 
 ## Why the normal forms are what they are
 

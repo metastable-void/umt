@@ -41,20 +41,21 @@ Status values:
 | F23 | Unmeasured event without fixed onset | pending | needs the score layer |
 | F24 | Global control event without a voice | pending | needs the score layer |
 | F25 | Strict ratio positivity, no invented delta | pending | needs the temporal solver |
-| F26 | Unattained optimization infimum | pending | needs optimization outcomes |
+| F26 | Unattained optimization infimum | pass | `tests/conformance.rs::f26_unattained_optimization_infimum` |
 | F27 | Infeasible positive-span device allocation | pending | needs quantization |
-| F28 | Context-dependent realization typing | pending | needs realization traits |
+| F28 | Context-dependent realization typing | pass | `tests/conformance.rs::f28_context_dependent_realization_typing` |
 | F29 | Direct empirical object without a unit | pending | needs the native container |
 | F30 | Markdown math-source and vocabulary lint | pending | source lint, not a library test |
-| F31 | Regular interval tuning requires a point reference | pending | needs tuning and references |
+| F31 | Regular interval tuning requires a point reference | pass | `tests/conformance.rs::f31_regular_tuning_requires_a_point_reference` |
 | F32 | Reciprocal rate and duration orientation | pending | needs the rate-continuum interface |
 | F33 | Saturation excludes the zero multiplier | pass | `tests/conformance.rs::f33_saturation_excludes_the_zero_multiplier` |
 | F34 | Group length versus lattice norm | pass | `tests/conformance.rs::f34_group_length_versus_lattice_norm` |
 | F35 | Three-note quarter-comma-meantone MOS | pending | needs generated sets |
 
-Ten of the thirty-five fixtures pass; none is partial. Every remaining one
-depends on a layer that does not exist yet - pitch, time, score, realization,
-device, or an external adapter.
+Thirteen of the thirty-five fixtures pass; none is partial. Every remaining one
+depends on a layer that does not exist yet - chords and voice leading,
+trajectories, time, score, device, the native container, or an external
+adapter.
 
 ## Law coverage
 
@@ -77,19 +78,27 @@ UMT-3.2 section 9.1 and prompt section 47 laws currently exercised, in
 | Basis-mismatch rejection | `basis_mismatch_is_always_rejected` |
 | Normal-form invariants (prompt section 10) | `smith_normal_form_invariants`, `hermite_normal_form_is_canonical`, `sublattice_coordinates_round_trip`, plus the unit tests in `src/algebra/normal_form.rs` |
 | Section 1.6 entry definition | `nearest_entry_satisfies_its_defining_inequality`, `floor_entry_satisfies_its_defining_inequality`, `conventions_are_ordered`, `octave_entry_is_fixed_to_n` |
+| Section 9.4 point-space laws | `point_space_laws`, `realized_point_space_laws` |
+| Law T1 regular tuning homomorphism | `t1_regular_tuning_is_a_homomorphism` |
+| Law T2 comma error | `t2_comma_error_is_minus_the_just_size` |
 
 P8 to P11 run against four mapping shapes - surjective, non-surjective, the
 zero map, and rank 2 - so the degenerate cases are covered rather than assumed
-away.
+away. The point-space laws run on both the exact structural torsor and the L3
+log-frequency torsor.
 
 The complexity laws of section 9.2 are exercised in
 `src/proportion/complexity.rs`: group-length laws, integer homogeneity where
 it is claimed, the seminorm null subgroup, and the Tenney-height identity
 `h_T(m) = log2(n d)` against an independently computed right-hand side.
 
-The tuning, torsor, voice-leading, notation, rhythm-tree, quantization,
-tempo-map, and temporal-constraint laws are not yet applicable: the structures
-they constrain do not exist.
+Law T3 - that a context-dependent realization is not advertised as a regular
+homomorphism - is structural here: `PitchRealizer::is_regular` defaults to
+`false`, and fixture F28 checks both answers.
+
+The voice-leading, notation, rhythm-tree, quantization, tempo-map, and
+temporal-constraint laws are not yet applicable: the structures they constrain
+do not exist.
 
 ## Examples
 

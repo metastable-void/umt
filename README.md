@@ -7,18 +7,22 @@ choice made explicit.
 
 ## Status
 
-Early, but the whole exact structural core is in place: the proportion
-lattice, exact integer matrices with Smith and canonical Hermite normal forms,
-free lattices and quotients, regular temperament mappings with their image and
-kernel lattices, comma-subgroup saturation validation, equal divisions,
-homomorphic splittings, representative policies, the structural quotient lens,
-unit equivalence, declared complexity profiles, and an immutable theory
-context with reference-based serialization.
+Early, but the exact structural core is complete and the metric layer has
+started. Implemented: the proportion lattice; exact integer matrices with
+Smith and canonical Hermite normal forms; free lattices and quotients; regular
+temperament mappings with their image and kernel lattices; comma-subgroup
+saturation validation; equal divisions; homomorphic splittings; representative
+policies including a provably bounded minimum-complexity search; the
+structural quotient lens; unit equivalence; declared complexity profiles;
+first-class optimization outcomes; pitch units, point torsors, regular tuning,
+and contextual realization; and an immutable theory context with
+reference-based serialization.
 
-**Ten of the thirty-five UMT-3.2 fixtures pass**, and every remaining one
-depends on a layer that is not built yet: pitch, time, score, realization, or
-device. See `docs/architecture.md` for the staging plan and
-`docs/conformance.md` for the fixture matrix.
+**Thirteen of the thirty-five UMT-3.2 fixtures pass**, and every remaining one
+depends on a layer that is not built yet: chords and voice leading,
+trajectories, time, score, device, or the native container. See
+`docs/architecture.md` for the staging plan and `docs/conformance.md` for the
+fixture matrix.
 
 This crate does not yet claim UMT-3.2 conformance. Conformance is claimed only
 when the applicable mandatory fixture suite passes.
@@ -83,6 +87,31 @@ assert_eq!(policy.choose(&class, &true)?.lift.exact_ratio()?.to_string(), "243/1
 
 // An adaptive policy is not additive, and never claims to be.
 assert!(!policy.claims_homomorphic());
+# Ok::<(), Box<dyn core::error::Error>>(())
+```
+
+A regular tuning evaluates intervals. Realizing an absolute pitch needs
+reference data on top of it, and the type system says so (fixture F31):
+
+```rust
+use umt::pitch::{Cents, FrequencyHz, PitchOrigin, PitchPoint, PitchRealization, RegularTuning};
+use umt::temperament::AmbientLattice;
+
+let steps = AmbientLattice::new("umt:edo:12", 1);
+let tuning = RegularTuning::equal_divisions(&steps, 12)?;
+
+// Interval sizes come from the tuning alone.
+let fifth = steps.element([7i64])?;
+assert!((Cents::from(tuning.size(&fifth)?).get() - 700.0).abs() < 1e-9);
+
+// Pitches need a structural reference and a realized one.
+let origin = PitchOrigin::new("umt:origin:a4");
+let reference = PitchPoint::new(origin, steps.zero());
+let realization =
+    PitchRealization::new(tuning, reference.clone(), FrequencyHz::new(440.0)?.log_frequency());
+
+let e5 = realization.realize_point(&reference.translate(&fifth)?)?;
+assert!((e5.frequency()?.get() - 659.2551138).abs() < 1e-6);
 # Ok::<(), Box<dyn core::error::Error>>(())
 ```
 

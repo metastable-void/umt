@@ -30,6 +30,7 @@ pub mod edo;
 pub mod image;
 pub mod kernel;
 pub mod map;
+pub mod minimum_complexity;
 pub mod representative;
 pub mod splitting;
 pub mod unit;
@@ -46,6 +47,8 @@ pub use crate::temperament::kernel::{
 };
 #[doc(inline)]
 pub use crate::temperament::map::{RawTemperamentMap, TemperamentMap};
+#[doc(inline)]
+pub use crate::temperament::minimum_complexity::MinimumComplexityPolicy;
 #[doc(inline)]
 pub use crate::temperament::representative::{
     CanonicalLiftPolicy, LensError, LiftDecision, OffsetPolicy, RepresentativePolicy, SplitPolicy,

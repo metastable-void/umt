@@ -13,9 +13,14 @@ use std::sync::Arc;
 use umt::algebra::QuotientGroup;
 use umt::algebra::lattice::Sublattice;
 use umt::error::{ComplexityError, TemperamentError};
+use umt::pitch::{
+    Cents, FrequencyHz, LogFrequency, Octaves, PitchOrigin, PitchPoint, PitchRealization,
+    PitchRealizer, RegularTuning,
+};
 use umt::proportion::{
     Complexity, ComplexityProfile, LogWeightedL1, PositiveFinite, RealValuation, WeightedL1,
 };
+use umt::realization::optimization::OptimizationOutcome;
 use umt::temperament::{
     AmbientLattice, EquivalenceDomain, HomomorphicSplit, KernelLattice, LinearSplit, OffsetPolicy,
     RepresentativePolicy, SaturationPolicy, SplitPolicy, StructuralLens, TemperamentMap,
@@ -515,6 +520,237 @@ fn f33_saturation_excludes_the_zero_multiplier() {
     assert!(zero_map.kills(&unit).unwrap());
     assert_eq!(identity.kernel().rank(), 0);
     assert_eq!(zero_map.kernel().rank(), 1);
+}
+
+/// F26 - unattained optimization infimum.
+///
+/// With admissible set `(0, 1)` and objective `J(y) = y`, the infimum is 0 and
+/// the minimizer set is empty. The optimizer must report both facts and must
+/// not fabricate a `y*`.
+#[test]
+fn f26_unattained_optimization_infimum() {
+    /// A declared interval, with endpoints included or not.
+    #[derive(Clone, Copy)]
+    struct Interval {
+        lower: f64,
+        upper: f64,
+        lower_included: bool,
+    }
+
+    /// Minimizes `J(y) = y` over the interval, honestly.
+    fn minimize(domain: Interval) -> OptimizationOutcome<f64, f64> {
+        if domain.lower > domain.upper || (domain.lower == domain.upper && !domain.lower_included) {
+            return OptimizationOutcome::Infeasible;
+        }
+        if domain.lower_included {
+            OptimizationOutcome::Exact {
+                solution: domain.lower,
+                cost: domain.lower,
+            }
+        } else {
+            // The greatest lower bound is known; nothing attains it.
+            OptimizationOutcome::InfimumNotAttained {
+                infimum: domain.lower,
+            }
+        }
+    }
+
+    // The fixture's case: the open interval (0, 1).
+    let open = Interval {
+        lower: 0.0,
+        upper: 1.0,
+        lower_included: false,
+    };
+    let outcome = minimize(open);
+    assert_eq!(
+        outcome,
+        OptimizationOutcome::InfimumNotAttained { infimum: 0.0 }
+    );
+    assert_eq!(outcome.cost(), Some(&0.0), "the infimum is reported");
+    assert_eq!(outcome.solution(), None, "no minimizer is fabricated");
+    assert!(!outcome.is_optimal());
+    assert!(!outcome.has_solution());
+
+    // The closed interval does attain it, and says so differently.
+    let closed = Interval {
+        lower_included: true,
+        ..open
+    };
+    assert!(minimize(closed).is_optimal());
+    assert_eq!(minimize(closed).solution(), Some(&0.0));
+
+    // An empty admissible set is a third, distinct outcome.
+    let empty = Interval {
+        lower: 1.0,
+        upper: 0.0,
+        lower_included: true,
+    };
+    assert_eq!(minimize(empty), OptimizationOutcome::Infeasible);
+    assert_eq!(minimize(empty).cost(), None);
+}
+
+/// F28 - context-dependent realization typing.
+///
+/// One structural pitch point, realized differently under different
+/// instrument and time contexts. The realization is `Phi(x, c)`, with the
+/// context an explicit parameter, and it must not claim to be a regular
+/// homomorphism.
+#[test]
+fn f28_context_dependent_realization_typing() {
+    /// Register-dependent stretch, as on a real piano.
+    struct StretchedPiano {
+        base: PitchRealization<AmbientLattice>,
+        cents_per_octave_squared: f64,
+    }
+
+    /// What the realization depends on beyond the pitch itself.
+    struct PerformanceContext {
+        stretch_enabled: bool,
+    }
+
+    impl PitchRealizer<umt::temperament::AmbientElem, PerformanceContext> for StretchedPiano {
+        type Error = umt::error::PitchError;
+
+        fn realize(
+            &self,
+            point: &PitchPoint<umt::temperament::AmbientElem>,
+            context: &PerformanceContext,
+        ) -> Result<LogFrequency, Self::Error> {
+            let plain = self.base.realize_point(point)?;
+            if !context.stretch_enabled {
+                return Ok(plain);
+            }
+            // Stretch grows with the square of the distance from the
+            // reference, which no homomorphism can do.
+            let distance = self.base.realized_reference().interval_to(plain).get();
+            let stretch = Cents::new(self.cents_per_octave_squared * distance * distance)?;
+            Ok(plain.translate(Octaves::from(stretch)))
+        }
+
+        fn is_regular(&self) -> bool {
+            false
+        }
+    }
+
+    let steps = AmbientLattice::new("umt:edo:12", 1);
+    let tuning = RegularTuning::equal_divisions(&steps, 12).unwrap();
+    let reference = PitchPoint::new(PitchOrigin::new("umt:origin:a4"), steps.zero());
+    let base = PitchRealization::new(
+        tuning,
+        reference.clone(),
+        FrequencyHz::new(440.0).unwrap().log_frequency(),
+    );
+    let piano = StretchedPiano {
+        base,
+        cents_per_octave_squared: 3.0,
+    };
+
+    // One structural point, two contexts, two different realizations.
+    let two_octaves_up = reference
+        .translate(&steps.element([24i64]).unwrap())
+        .unwrap();
+    let plain = piano
+        .realize(
+            &two_octaves_up,
+            &PerformanceContext {
+                stretch_enabled: false,
+            },
+        )
+        .unwrap();
+    let stretched = piano
+        .realize(
+            &two_octaves_up,
+            &PerformanceContext {
+                stretch_enabled: true,
+            },
+        )
+        .unwrap();
+
+    assert_ne!(plain, stretched);
+    assert!(stretched.frequency().unwrap().get() > plain.frequency().unwrap().get());
+
+    // It does not claim regularity, and it is indeed not additive: the
+    // stretch at two octaves is not twice the stretch at one.
+    assert!(!piano.is_regular());
+    let one_octave_up = reference
+        .translate(&steps.element([12i64]).unwrap())
+        .unwrap();
+    let context = PerformanceContext {
+        stretch_enabled: true,
+    };
+    let one = piano.realize(&one_octave_up, &context).unwrap();
+    let two = piano.realize(&two_octaves_up, &context).unwrap();
+    let first_octave = piano.base.realized_reference().interval_to(one).get();
+    let both_octaves = piano.base.realized_reference().interval_to(two).get();
+    assert!(
+        (both_octaves - 2.0 * first_octave).abs() > 1e-6,
+        "a contextual realization need not be additive, and this one is not"
+    );
+
+    // The regular realization it wraps does claim regularity, correctly.
+    assert!(PitchRealizer::<_, PerformanceContext>::is_regular(
+        &piano.base
+    ));
+}
+
+/// F31 - a regular interval tuning requires a point reference.
+///
+/// Interval sizes are available from `tau` alone; absolute pitch points are
+/// not realized until reference data determine the affine map `tau_hat`.
+#[test]
+fn f31_regular_tuning_requires_a_point_reference() {
+    let steps = AmbientLattice::new("umt:edo:12", 1);
+    let tuning = RegularTuning::equal_divisions(&steps, 12).unwrap();
+
+    // Intervals: fully evaluable.
+    for (count, expected) in [(0i64, 0.0), (7, 700.0), (-12, -1200.0)] {
+        let size = Cents::from(tuning.size(&steps.element([count]).unwrap()).unwrap());
+        assert!((size.get() - expected).abs() < 1e-9, "{count} steps");
+    }
+
+    // Points: not evaluable from the tuning. The only way to realize one is
+    // to build a `PitchRealization`, which requires both a structural and a
+    // realized reference; there is no constructor that omits them.
+    let origin = PitchOrigin::new("umt:origin:a4");
+    let reference = PitchPoint::new(origin.clone(), steps.zero());
+    let realization = PitchRealization::new(
+        tuning,
+        reference.clone(),
+        FrequencyHz::new(440.0).unwrap().log_frequency(),
+    );
+
+    assert_eq!(
+        realization.realize_point(&reference).unwrap(),
+        realization.realized_reference(),
+        "the reference point realizes to the reference pitch"
+    );
+
+    let up_a_fifth = reference
+        .translate(&steps.element([7i64]).unwrap())
+        .unwrap();
+    let hz = realization
+        .realize_point(&up_a_fifth)
+        .unwrap()
+        .frequency()
+        .unwrap()
+        .get();
+    assert!((hz - 659.255_113_8).abs() < 1e-6, "{hz}");
+
+    // Changing the realized reference changes pitches, not intervals: concert
+    // pitch is reference data, not a property of the lattice.
+    let baroque = realization.with_concert_pitch(FrequencyHz::new(415.0).unwrap().log_frequency());
+    let baroque_hz = baroque
+        .realize_point(&up_a_fifth)
+        .unwrap()
+        .frequency()
+        .unwrap()
+        .get();
+    assert!(baroque_hz < hz);
+    assert_eq!(
+        baroque.tuning(),
+        realization.tuning(),
+        "the interval tuning is untouched"
+    );
 }
 
 /// Prompt section 13: mandatory equal-division cases.

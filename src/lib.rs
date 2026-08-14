@@ -9,6 +9,7 @@ pub mod algebra;
 pub mod context;
 pub mod error;
 pub mod io;
+pub mod pitch;
 pub mod proportion;
 pub mod realization;
 pub mod temperament;

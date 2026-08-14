@@ -416,6 +416,20 @@ impl ImageElem {
     /// Returns [`TemperamentError::ImageMismatch`] if the operands belong to
     /// different image lattices.
     pub fn checked_add(&self, other: &Self) -> Result<Self, TemperamentError> {
+        self.combine(other, false)
+    }
+
+    /// Group subtraction.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TemperamentError::ImageMismatch`] if the operands belong to
+    /// different image lattices.
+    pub fn checked_sub(&self, other: &Self) -> Result<Self, TemperamentError> {
+        self.combine(other, true)
+    }
+
+    fn combine(&self, other: &Self, subtract: bool) -> Result<Self, TemperamentError> {
         if !Arc::ptr_eq(&self.lattice, &other.lattice) && *self.lattice != *other.lattice {
             return Err(TemperamentError::ImageMismatch);
         }
@@ -425,9 +439,20 @@ impl ImageElem {
                 .coordinates
                 .iter()
                 .zip(&other.coordinates)
-                .map(|(a, b)| a + b)
+                .map(|(a, b)| if subtract { a - b } else { a + b })
                 .collect(),
         })
+    }
+}
+
+impl core::ops::Neg for &ImageElem {
+    type Output = ImageElem;
+
+    fn neg(self) -> ImageElem {
+        ImageElem {
+            lattice: Arc::clone(&self.lattice),
+            coordinates: self.coordinates.iter().map(core::ops::Neg::neg).collect(),
+        }
     }
 }
 

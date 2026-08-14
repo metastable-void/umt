@@ -10,6 +10,7 @@ use std::sync::Arc;
 use proptest::prelude::*;
 use umt::algebra::integer::round_n_log2;
 use umt::algebra::normal_form::{HermiteNormalForm, SmithNormalForm};
+use umt::pitch::{LogFrequency, Octaves, PitchOrigin, PitchPoint, RegularTuning};
 use umt::temperament::{
     AmbientLattice, HomomorphicSplit, KernelElem, LinearSplit, OffsetPolicy, RepresentativePolicy,
     SplitPolicy, StructuralLens, TemperamentMap,
@@ -332,6 +333,107 @@ proptest! {
             // The shifting policy claims nothing, and nothing is assumed.
             prop_assert!(!shifting_policy(&map).claims_homomorphic());
         }
+    }
+
+    /// UMT-3.2 section 9.4: the point-space laws, on the exact structural
+    /// torsor.
+    #[test]
+    fn point_space_laws(
+        base in exponents(),
+        g in exponents(),
+        h in exponents(),
+    ) {
+        let basis = five_limit();
+        let origin = PitchOrigin::new("umt:origin:test");
+        let p = PitchPoint::new(origin, basis.monzo(base).unwrap());
+        let g = basis.monzo(g).unwrap();
+        let h = basis.monzo(h).unwrap();
+
+        // (p + g) + h = p + (g + h)
+        prop_assert_eq!(
+            p.translate(&g).unwrap().translate(&h).unwrap(),
+            p.translate(&g.checked_add(&h).unwrap()).unwrap()
+        );
+
+        // p + 0 = p
+        prop_assert_eq!(p.translate(&basis.zero()).unwrap(), p.clone());
+
+        // p + int(p, q) = q
+        let q = p.translate(&g).unwrap();
+        prop_assert_eq!(p.translate(&p.interval_to(&q).unwrap()).unwrap(), q.clone());
+
+        // int(p, q) + int(q, r) = int(p, r)
+        let r = q.translate(&h).unwrap();
+        prop_assert_eq!(
+            p.interval_to(&q).unwrap().checked_add(&q.interval_to(&r).unwrap()).unwrap(),
+            p.interval_to(&r).unwrap()
+        );
+    }
+
+    /// The same laws on the L3 log-frequency torsor, where the interval group
+    /// is the reals.
+    #[test]
+    fn realized_point_space_laws(
+        base in -6.0f64..6.0,
+        g in -6.0f64..6.0,
+        h in -6.0f64..6.0,
+    ) {
+        let p = LogFrequency::new(base).unwrap();
+        let g = Octaves::new(g).unwrap();
+        let h = Octaves::new(h).unwrap();
+
+        prop_assert!(
+            (p.translate(g).translate(h).get() - p.translate(g + h).get()).abs() < 1e-9
+        );
+        prop_assert_eq!(p.translate(Octaves::ZERO), p);
+
+        let q = p.translate(g);
+        prop_assert!((p.translate(p.interval_to(q)).get() - q.get()).abs() < 1e-12);
+
+        let r = q.translate(h);
+        prop_assert!(
+            ((p.interval_to(q) + q.interval_to(r)).get() - p.interval_to(r).get()).abs() < 1e-9
+        );
+    }
+
+    /// Law T1: a regular tuning is a homomorphism on its declared interval
+    /// group.
+    #[test]
+    fn t1_regular_tuning_is_a_homomorphism(
+        a in -200i64..=200,
+        b in -200i64..=200,
+        divisions in 1u32..=100,
+    ) {
+        let steps = AmbientLattice::new("umt:property-edo", 1);
+        let tuning = RegularTuning::equal_divisions(&steps, divisions).unwrap();
+        let x = steps.element([a]).unwrap();
+        let y = steps.element([b]).unwrap();
+        let sum = x.checked_add(&y).unwrap();
+        prop_assert!(
+            (tuning.size(&sum).unwrap().get()
+                - (tuning.size(&x).unwrap().get() + tuning.size(&y).unwrap().get()))
+            .abs()
+                < 1e-9
+        );
+    }
+
+    /// Law T2: for a comma in the kernel, the tuning error is exactly minus
+    /// its just size.
+    #[test]
+    fn t2_comma_error_is_minus_the_just_size(
+        multiplier in -6i64..=6,
+    ) {
+        let basis = five_limit();
+        let steps = AmbientLattice::new("umt:edo:12", 1);
+        let map = TemperamentMap::from_rows(&basis, &steps, [[12i64, 19, 28]]).unwrap();
+        let tuning = RegularTuning::equal_divisions(&steps, 12).unwrap();
+
+        let comma = basis.monzo([-4, 4, -1]).unwrap().scale(&Z::from(multiplier));
+        prop_assume!(map.kills(&comma).unwrap());
+
+        let error = tuning.error(&map, &comma).unwrap().get();
+        let just = comma.log2_valuation_f64().unwrap();
+        prop_assert!((error + just).abs() < 1e-9, "error {error}, just {just}");
     }
 
     /// Prompt section 10: the Smith normal form reconstructs its input, its

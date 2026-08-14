@@ -274,7 +274,48 @@ carry fields this build does not know, and prompt section 54 forbids
 interpreting unknown fields as current semantics, so such a document is
 rejected rather than guessed at.
 
-## D19. `divisions = 0` is a legal mapping
+## D19. A minimum-complexity search proves its own bound
+
+`MinimumComplexityPolicy` does not search "a reasonable region and hope". For
+a lattice norm, the triangle inequality gives `h(m0 + k) >= h(k) - h(m0)`, so
+any improving kernel element satisfies `h(k) <= 2 h(m0)`; the echelon
+structure of the canonical kernel basis turns that into per-coordinate bounds.
+
+Two consequences the API makes visible:
+
+- The bound needs per-coordinate weights, so the policy requires
+  `CoordinateWeighted` rather than bare `Complexity`, and a seminorm is
+  rejected outright: its minimizer set over a coset can be infinite.
+- The search *region* is computed in floating point and rounded outward, so it
+  can only be too large. The *selection* inside it uses the complexity's own
+  comparison, which is exact for `WeightedL1`. Approximation never creeps into
+  the choice, only into the size of the box.
+
+When the provable region exceeds the budget, the outcome is
+`Approximate { guarantee: SearchedRegion { .. } }`, never `Exact`. Downgrading
+the claim is the whole point of having the claim be a value.
+
+## D20. Points carry an origin identity, and the L3 torsor does not
+
+A structural pitch point is an origin identity plus an offset, because "a
+fifth above C" and "a fifth above D" are different pitches and an exponent
+vector cannot tell them apart. `interval_to` across different origins is an
+error, not a number.
+
+`LogFrequency` needs no origin: the real line has a canonical one at 1 Hz. It
+is still a torsor - point plus interval, point minus point - and there is
+still no point-plus-point operation on either.
+
+## D21. The declared L2 interval group is a type, not a field
+
+UMT-3.2 section 1.8.2 lets a tuning live on the reachable image `H` or on the
+ambient `Gamma`, and section 1.9 requires the choice to be recorded.
+`RegularTuning<G>` is generic over that choice through `L2IntervalGroup`, so
+the record cannot be omitted and a tuning of one group cannot be handed an
+element of the other. For 6-EDO that is the difference between a generator of
+one step and a generator of two.
+
+## D22. `divisions = 0` is a legal mapping
 
 The zero mapping has image `{0}`, which section 1.6 fixes through the
 convention `gcd(0, ..., 0) = 0`. In the general API its image has rank 0 and
@@ -282,7 +323,7 @@ an image element has an empty coordinate vector, which is the correct answer.
 Only the rank-one scalar convenience API of `PatentVal` has nothing to return,
 and it reports `TrivialImage` rather than pretending the answer is zero.
 
-## D20. Rank-0 bases are permitted
+## D23. Rank-0 bases are permitted
 
 A basis with no generators spans the trivial lattice. Nothing breaks, and
 rejecting it would be an invented restriction.

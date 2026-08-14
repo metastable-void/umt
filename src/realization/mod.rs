@@ -6,4 +6,5 @@
 //! UMT-3.2 section 0.6.1 requires every real-valued observation to reference
 //! its provenance from the moment it can be constructed.
 
+pub mod optimization;
 pub mod provenance;
