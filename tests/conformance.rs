@@ -10,11 +10,16 @@
 
 use std::sync::Arc;
 
+use umt::algebra::QuotientGroup;
 use umt::algebra::lattice::Sublattice;
-use umt::error::TemperamentError;
+use umt::error::{ComplexityError, TemperamentError};
+use umt::proportion::{
+    Complexity, ComplexityProfile, LogWeightedL1, PositiveFinite, RealValuation, WeightedL1,
+};
 use umt::temperament::{
-    AmbientLattice, HomomorphicSplit, KernelLattice, LinearSplit, OffsetPolicy,
+    AmbientLattice, EquivalenceDomain, HomomorphicSplit, KernelLattice, LinearSplit, OffsetPolicy,
     RepresentativePolicy, SaturationPolicy, SplitPolicy, StructuralLens, TemperamentMap,
+    UnitEquivalence,
 };
 use umt::{Basis, IntMatrix, PatentVal, RoundingConvention, Z};
 
@@ -101,16 +106,14 @@ fn f02_unsaturated_direct_comma_subgroup() {
     assert!(map.kernel().contains(&comma).unwrap());
 }
 
-/// F3 - 12-EDO quotient (partial).
+/// F3 - 12-EDO quotient.
 ///
-/// Covered here: the syntonic and Pythagorean commas are both killed, the
-/// kernel has rank 2 so the reachable quotient is free of rank 1, the image is
-/// all of `Z`, and the octave maps to 12 steps.
-///
-/// Not covered yet: unit equivalence as a constructed quotient object, so
-/// `Z/12Z` is asserted as an index rather than built (UMT-3.2 section 1.9).
+/// The syntonic and Pythagorean commas are both killed; the exact tempered
+/// quotient `T = Lambda_B / K` is free of rank 1, that is, isomorphic to `Z`,
+/// before octave equivalence; and after octave equivalence with the octave
+/// mapped to 12 steps the pitch classes form `Z/12Z`.
 #[test]
-fn f03_twelve_edo_quotient_partial() {
+fn f03_twelve_edo_quotient() {
     let basis = five_limit();
     let ambient = AmbientLattice::new("umt:edo:12", 1);
     let map = TemperamentMap::from_rows(&basis, &ambient, [[12i64, 19, 28]]).unwrap();
@@ -120,9 +123,18 @@ fn f03_twelve_edo_quotient_partial() {
     assert!(map.kills(&syntonic).unwrap());
     assert!(map.kills(&pythagorean).unwrap());
 
-    // rank(Lambda_B) - rank(K) = 1, and T is isomorphic to H, which is Z.
-    assert_eq!(basis.rank() - map.kernel().rank(), 1);
-    assert_eq!(map.image().rank(), 1);
+    // The tempered quotient itself, built rather than inferred.
+    let tempered = QuotientGroup::of(basis.rank(), map.kernel().sublattice()).unwrap();
+    assert_eq!(
+        tempered.to_string(),
+        "Z",
+        "T = Lambda_B / K is free of rank 1"
+    );
+    assert_eq!(tempered.free_rank(), 1);
+    assert!(tempered.is_torsion_free());
+
+    // And T is isomorphic to H, which here is all of Gamma.
+    assert_eq!(map.image().rank(), tempered.free_rank());
     assert!(map.image().is_full(), "H = Gamma = Z");
 
     // Both commas generate the kernel between them.
@@ -133,9 +145,13 @@ fn f03_twelve_edo_quotient_partial() {
     .unwrap();
     assert_eq!(&kernel_from_commas, map.kernel());
 
-    // Octave maps to 12 steps, so ambient unit equivalence has index 12.
+    // After octave equivalence, pitch classes form Z/12Z.
     let octave = basis.monzo([1, 0, 0]).unwrap();
     assert_eq!(map.apply(&octave).unwrap().coordinates(), &[Z::from(12)]);
+    let classes = UnitEquivalence::on_ambient(&map, &octave).unwrap();
+    assert_eq!(classes.quotient().to_string(), "Z/12Z");
+    assert_eq!(classes.class_count(), Some(Z::from(12)));
+    assert_eq!(classes.domain(), EquivalenceDomain::Ambient);
 }
 
 /// F4 - 6-EDO image.
@@ -207,6 +223,119 @@ fn f04_6edo_image() {
             "an odd step is not a class, so no lift can be requested for it"
         );
     }
+}
+
+/// F5 - height with a generator below 1.
+///
+/// A generic complexity must use explicitly declared positive weights. A
+/// generator whose valuation is below 1 has a negative logarithm, and an
+/// implementation that blindly used `log2 b_i` as a norm weight would produce
+/// a function that is not a norm at all.
+#[test]
+fn f05_height_with_a_generator_below_one() {
+    let basis = Basis::builder("umt:symbolic:sub-unit")
+        .symbolic_real_generator(
+            "half",
+            RealValuation::new(PositiveFinite::new(0.5).unwrap()),
+        )
+        .symbolic_real_generator(
+            "three",
+            RealValuation::new(PositiveFinite::new(3.0).unwrap()),
+        )
+        .symbolic_real_generator(
+            "seven",
+            RealValuation::new(PositiveFinite::new(7.0).unwrap()),
+        )
+        .build()
+        .unwrap();
+
+    // Deriving weights from logarithms is refused, with the offending
+    // generator and weight reported.
+    match LogWeightedL1::from_log2_valuations(&basis) {
+        Err(ComplexityError::NonPositiveWeight { index, weight }) => {
+            assert_eq!(index, 0);
+            assert!(weight < 0.0);
+        }
+        other => panic!("expected rejection of a negative log weight, got {other:?}"),
+    }
+
+    // Tenney height is not even applicable: this is not a prime basis.
+    assert_eq!(
+        LogWeightedL1::tenney(&basis).unwrap_err(),
+        ComplexityError::NotPrimeBasis
+    );
+
+    // Explicit positive weights are the supported route, and they give a norm.
+    let weights = [1.0f64, 1.585, 2.807].map(|w| PositiveFinite::new(w).unwrap());
+    let norm = LogWeightedL1::new(&basis, weights).unwrap();
+    assert_eq!(norm.profile(), ComplexityProfile::LatticeNorm);
+    for exponents in [[1i64, 0, 0], [-3, 2, 1], [0, 0, -4]] {
+        let monzo = basis.monzo(exponents).unwrap();
+        assert!(norm.value_f64(&monzo).unwrap() > 0.0);
+    }
+    assert_eq!(norm.value_f64(&basis.zero()).unwrap(), 0.0);
+}
+
+/// F34 - group length versus lattice norm.
+///
+/// `g(m) = sqrt(h1(m))` satisfies the separating group-length laws but fails
+/// integer homogeneity, so it must be declared a `group_length` and must not
+/// be advertised as a `lattice_norm`.
+#[test]
+fn f34_group_length_versus_lattice_norm() {
+    struct SquareRoot(WeightedL1);
+
+    impl Complexity for SquareRoot {
+        fn basis(&self) -> &Arc<Basis> {
+            self.0.basis()
+        }
+
+        fn profile(&self) -> ComplexityProfile {
+            ComplexityProfile::GroupLength { separating: true }
+        }
+
+        fn value_f64(&self, monzo: &umt::Monzo) -> Result<f64, ComplexityError> {
+            Ok(self.0.value_f64(monzo)?.sqrt())
+        }
+    }
+
+    let basis = five_limit();
+    let base = WeightedL1::uniform(&basis);
+    let root = SquareRoot(base);
+
+    // Declared as a group length, and a separating one.
+    assert_eq!(
+        root.profile(),
+        ComplexityProfile::GroupLength { separating: true }
+    );
+    assert!(!root.profile().claims_homogeneity());
+    assert!(root.profile().claims_subadditivity());
+    assert_ne!(root.profile(), ComplexityProfile::LatticeNorm);
+
+    let m = basis.monzo([-4, 4, -1]).unwrap();
+    let n = basis.monzo([3, -1, 2]).unwrap();
+
+    // h(0) = 0, symmetry, subadditivity, separation.
+    assert_eq!(root.value_f64(&basis.zero()).unwrap(), 0.0);
+    assert_eq!(root.value_f64(&m).unwrap(), root.value_f64(&-&m).unwrap());
+    assert!(
+        root.value_f64(&m.checked_add(&n).unwrap()).unwrap()
+            <= root.value_f64(&m).unwrap() + root.value_f64(&n).unwrap() + 1e-12
+    );
+    assert!(root.value_f64(&m).unwrap() > 0.0);
+
+    // Integer homogeneity fails: g(4m) = 2 g(m), not 4 g(m).
+    let quadrupled = root.value_f64(&m.scale(&Z::from(4))).unwrap();
+    assert!((quadrupled - 2.0 * root.value_f64(&m).unwrap()).abs() < 1e-12);
+    assert!((quadrupled - 4.0 * root.value_f64(&m).unwrap()).abs() > 1.0);
+
+    // The underlying weighted l1 does claim homogeneity, and has it.
+    let norm = WeightedL1::uniform(&basis);
+    assert_eq!(norm.profile(), ComplexityProfile::LatticeNorm);
+    assert_eq!(
+        norm.exact_value(&m.scale(&Z::from(4))).unwrap().unwrap(),
+        umt::Q::new(Z::from(4), Z::from(1)) * norm.exact_value(&m).unwrap().unwrap()
+    );
 }
 
 /// F6 - nonhomomorphic representative policy.
@@ -320,34 +449,43 @@ fn f07_enharmonic_spelling() {
     assert!(map.kills(&map.kernel().embed(&wide).unwrap()).unwrap());
 }
 
-/// F22 - reachable versus ambient octave classes (partial).
+/// F22 - reachable versus ambient octave classes.
 ///
 /// With `H = 2Z`, `Gamma = Z`, and octave image 6, the reachable quotient
-/// `H/6Z` has 3 elements while the ambient quotient `Gamma/6Z` has 6. The two
-/// counts are derived from the represented image, not asserted as constants.
-///
-/// Not covered yet: the quotient groups as constructed objects.
+/// `H/6Z` is `Z/3Z` while the ambient quotient `Gamma/6Z` is `Z/6Z`. Both are
+/// constructed, both record which group they were formed on, and they are not
+/// identified.
 #[test]
-fn f22_reachable_versus_ambient_classes_partial() {
+fn f22_reachable_versus_ambient_classes() {
     let basis = five_limit();
     let val = PatentVal::new(&basis, 6, NEAREST).unwrap();
+    let map = val.map();
+    let octave = basis.monzo([1, 0, 0]).unwrap();
 
-    let octave_image = val.apply(&basis.monzo([1, 0, 0]).unwrap()).unwrap();
-    assert_eq!(octave_image, Z::from(6));
+    assert_eq!(val.apply(&octave).unwrap(), Z::from(6));
+    assert_eq!(val.image_generator(), Z::from(2));
 
-    let image_generator = val.image_generator();
-    assert_eq!(image_generator, Z::from(2));
+    let ambient = UnitEquivalence::on_ambient(map, &octave).unwrap();
+    let reachable = UnitEquivalence::on_image(map, &octave).unwrap();
 
-    // |Gamma / 6Z| = 6, and |H / 6Z| = |2Z / 6Z| = 6 / 2 = 3.
-    let ambient_classes = octave_image.clone();
-    let reachable_classes = &octave_image / &image_generator;
+    assert_eq!(ambient.quotient().to_string(), "Z/6Z");
+    assert_eq!(ambient.class_count(), Some(Z::from(6)));
+    assert_eq!(ambient.domain(), EquivalenceDomain::Ambient);
 
-    assert_eq!(ambient_classes, Z::from(6));
-    assert_eq!(reachable_classes, Z::from(3));
+    assert_eq!(reachable.quotient().to_string(), "Z/3Z");
+    assert_eq!(reachable.class_count(), Some(Z::from(3)));
+    assert_eq!(reachable.domain(), EquivalenceDomain::Image);
+
     assert_ne!(
-        ambient_classes, reachable_classes,
-        "reachable and ambient pitch-class counts must not be identified"
+        ambient.quotient(),
+        reachable.quotient(),
+        "reachable and ambient pitch-class groups must not be identified"
     );
+
+    // The difference comes from the unit's coordinates in each group: six
+    // ambient steps are three units of the image lattice.
+    assert_eq!(ambient.unit_coordinates(), &[Z::from(6)]);
+    assert_eq!(reachable.unit_coordinates(), &[Z::from(3)]);
 }
 
 /// F33 - saturation excludes the zero multiplier.

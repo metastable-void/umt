@@ -23,7 +23,24 @@ use crate::error::TemperamentError;
 /// interchangeable unless they are the same declared object, for the same
 /// reason two bases of equal rank are not (prompt section 7).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    serde(into = "alloc::string::String", from = "alloc::string::String")
+)]
 pub struct LatticeId(Arc<str>);
+
+impl From<alloc::string::String> for LatticeId {
+    fn from(value: alloc::string::String) -> Self {
+        Self(Arc::from(value))
+    }
+}
+
+impl From<LatticeId> for alloc::string::String {
+    fn from(value: LatticeId) -> Self {
+        value.as_str().into()
+    }
+}
 
 impl LatticeId {
     /// Wraps a stable lattice identity.

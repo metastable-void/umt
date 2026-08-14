@@ -12,6 +12,23 @@ use num_traits::Zero;
 use crate::algebra::Z;
 use crate::error::MatrixError;
 
+/// The unvalidated wire form of an [`IntMatrix`].
+///
+/// Entries are canonical decimal text, never floating point (UMT-3.2 section
+/// 8.9). Loading goes through `TryFrom`, so a deserialized matrix has passed
+/// the same shape check as one built in memory.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct RawIntMatrix {
+    /// Declared row count.
+    pub rows: usize,
+    /// Declared column count.
+    pub cols: usize,
+    /// Row-major entries.
+    #[cfg_attr(feature = "serde", serde(with = "crate::io::serde_exact::vec_z"))]
+    pub data: Vec<Z>,
+}
+
 /// A matrix of exact integers.
 ///
 /// UMT layer: L1/L2, exact. Equality is presentation equality: same shape and
@@ -19,6 +36,11 @@ use crate::error::MatrixError;
 /// homomorphism up to a change of basis are *not* equal; that question is
 /// answered by the normal forms and by the lattice types built on them.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    serde(into = "RawIntMatrix", try_from = "RawIntMatrix")
+)]
 pub struct IntMatrix {
     rows: usize,
     cols: usize,
@@ -352,6 +374,24 @@ impl IntMatrix {
             let value = -self.at(row, col);
             self.data[row * self.cols + col] = value;
         }
+    }
+}
+
+impl From<IntMatrix> for RawIntMatrix {
+    fn from(value: IntMatrix) -> Self {
+        Self {
+            rows: value.rows,
+            cols: value.cols,
+            data: value.data,
+        }
+    }
+}
+
+impl TryFrom<RawIntMatrix> for IntMatrix {
+    type Error = MatrixError;
+
+    fn try_from(value: RawIntMatrix) -> Result<Self, Self::Error> {
+        Self::new(value.rows, value.cols, value.data)
     }
 }
 

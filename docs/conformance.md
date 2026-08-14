@@ -18,9 +18,9 @@ Status values:
 |---|---|---|---|
 | F1 | Kernel saturation versus surjectivity, `V = [2]` | pass | `tests/conformance.rs::f01_kernel_saturation_versus_surjectivity` |
 | F2 | Unsaturated direct comma subgroup | pass | `tests/conformance.rs::f02_unsaturated_direct_comma_subgroup` |
-| F3 | 12-EDO quotient | partial | `tests/conformance.rs::f03_twelve_edo_quotient_partial` |
+| F3 | 12-EDO quotient | pass | `tests/conformance.rs::f03_twelve_edo_quotient` |
 | F4 | 6-EDO image is `2Z` | pass | `tests/conformance.rs::f04_6edo_image` |
-| F5 | Height with a generator below 1 | pending | needs complexity profiles |
+| F5 | Height with a generator below 1 | pass | `tests/conformance.rs::f05_height_with_a_generator_below_one` |
 | F6 | Nonhomomorphic representative policy | pass | `tests/conformance.rs::f06_nonhomomorphic_representative_policy` |
 | F7 | Enharmonic spelling | pass | `tests/conformance.rs::f07_enharmonic_spelling` |
 | F8 | Unequal voice count | pending | needs chords and voice leading |
@@ -37,7 +37,7 @@ Status values:
 | F19 | Inharmonic empirical scale | pending | needs the L3 scale object |
 | F20 | Continuous pitch trajectory | pending | needs trajectories |
 | F21 | Scala mixed exact and metric entries | pending | needs the `.scl` adapter |
-| F22 | Reachable versus ambient octave classes | partial | `tests/conformance.rs::f22_reachable_versus_ambient_classes_partial` |
+| F22 | Reachable versus ambient octave classes | pass | `tests/conformance.rs::f22_reachable_versus_ambient_classes` |
 | F23 | Unmeasured event without fixed onset | pending | needs the score layer |
 | F24 | Global control event without a voice | pending | needs the score layer |
 | F25 | Strict ratio positivity, no invented delta | pending | needs the temporal solver |
@@ -49,20 +49,12 @@ Status values:
 | F31 | Regular interval tuning requires a point reference | pending | needs tuning and references |
 | F32 | Reciprocal rate and duration orientation | pending | needs the rate-continuum interface |
 | F33 | Saturation excludes the zero multiplier | pass | `tests/conformance.rs::f33_saturation_excludes_the_zero_multiplier` |
-| F34 | Group length versus lattice norm | pending | needs complexity profiles |
+| F34 | Group length versus lattice norm | pass | `tests/conformance.rs::f34_group_length_versus_lattice_norm` |
 | F35 | Three-note quarter-comma-meantone MOS | pending | needs generated sets |
 
-## Outstanding obligations for the partial fixtures
-
-**F3.** The kernel, its rank, and the image are now all constructed and
-asserted, so the reachable quotient is pinned down as free of rank 1 by the
-first isomorphism theorem. What remains is unit equivalence as a constructed
-quotient object: `Z/12Z` is currently asserted as an index computation
-(UMT-3.2 section 1.9).
-
-**F22.** The class counts are derived from the represented image and octave
-image rather than asserted as constants, but the quotient groups themselves
-are not constructed. Same dependency as F3.
+Ten of the thirty-five fixtures pass; none is partial. Every remaining one
+depends on a layer that does not exist yet - pitch, time, score, realization,
+device, or an external adapter.
 
 ## Law coverage
 
@@ -90,9 +82,14 @@ P8 to P11 run against four mapping shapes - surjective, non-surjective, the
 zero map, and rank 2 - so the degenerate cases are covered rather than assumed
 away.
 
-The complexity, tuning, torsor, voice-leading, notation, rhythm-tree,
-quantization, tempo-map, and temporal-constraint laws are not yet applicable:
-the structures they constrain do not exist.
+The complexity laws of section 9.2 are exercised in
+`src/proportion/complexity.rs`: group-length laws, integer homogeneity where
+it is claimed, the seminorm null subgroup, and the Tenney-height identity
+`h_T(m) = log2(n d)` against an independently computed right-hand side.
+
+The tuning, torsor, voice-leading, notation, rhythm-tree, quantization,
+tempo-map, and temporal-constraint laws are not yet applicable: the structures
+they constrain do not exist.
 
 ## Examples
 

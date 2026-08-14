@@ -159,6 +159,120 @@ pub enum MonzoError {
     Valuation(#[from] ValuationError),
 }
 
+/// A theory-context registration or lookup failed.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum ContextError {
+    /// A referenced basis is not registered.
+    #[error("no basis registered under `{id}`")]
+    UnknownBasis {
+        /// The unresolved identifier.
+        id: BasisId,
+    },
+
+    /// A referenced ambient lattice is not registered.
+    #[error("no ambient lattice registered under `{id}`")]
+    UnknownAmbient {
+        /// The unresolved identifier.
+        id: LatticeId,
+    },
+
+    /// A referenced mapping is not registered.
+    #[error("no mapping registered under `{id}`")]
+    UnknownMapping {
+        /// The unresolved identifier.
+        id: crate::context::MappingId,
+    },
+
+    /// An identifier was reused for a different basis.
+    #[error("`{id}` is already registered as a different basis")]
+    ConflictingBasis {
+        /// The reused identifier.
+        id: BasisId,
+    },
+
+    /// An identifier was reused for a different ambient lattice.
+    #[error("`{id}` is already registered as a different ambient lattice")]
+    ConflictingAmbient {
+        /// The reused identifier.
+        id: LatticeId,
+    },
+
+    /// An identifier was reused for a different mapping.
+    #[error("`{id}` is already registered as a different mapping")]
+    ConflictingMapping {
+        /// The reused identifier.
+        id: crate::context::MappingId,
+    },
+
+    /// A resolved monzo failed validation.
+    #[error(transparent)]
+    Monzo(#[from] MonzoError),
+
+    /// A resolved mapping failed validation.
+    #[error(transparent)]
+    Temperament(#[from] TemperamentError),
+}
+
+/// A complexity function could not be built or evaluated.
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+#[non_exhaustive]
+pub enum ComplexityError {
+    /// The number of weights did not match the basis rank.
+    #[error("expected {expected} weights for this basis, found {found}")]
+    WeightCount {
+        /// Rank of the basis.
+        expected: usize,
+        /// Number of weights supplied.
+        found: usize,
+    },
+
+    /// A weight was negative.
+    #[error("weight {index} is negative")]
+    NegativeWeight {
+        /// Index of the offending weight.
+        index: usize,
+    },
+
+    /// A derived weight was not strictly positive.
+    ///
+    /// A generator whose valuation is at most 1 has a logarithm that is zero
+    /// or negative. Using it as a norm weight would produce a function that is
+    /// not a norm, which UMT-3.2 fixture F5 requires be caught rather than
+    /// silently accepted.
+    #[error("derived weight {weight} at generator {index} is not strictly positive")]
+    NonPositiveWeight {
+        /// Index of the offending generator.
+        index: usize,
+        /// The rejected weight.
+        weight: f64,
+    },
+
+    /// Tenney height was requested for a basis that is not a prime basis.
+    ///
+    /// The reduced-rational identity `h_T(m) = log2(n d)` is specific to
+    /// prime-factor coordinates (UMT-3.2 section 1.3.2).
+    #[error("Tenney height requires a basis with a prime-factorization independence contract")]
+    NotPrimeBasis,
+
+    /// An exact rational valuation was required and is not available.
+    #[error("this complexity requires an exact rational basis profile")]
+    NotRationalProfile,
+
+    /// An exponent was too large to evaluate.
+    #[error("exponent is too large to evaluate as a real magnitude")]
+    ExponentOutOfRange,
+
+    /// A monzo from an unrelated basis was supplied.
+    #[error("basis mismatch: expected `{expected}`, found `{found}`")]
+    BasisMismatch {
+        /// Identity of the expected basis.
+        expected: BasisId,
+        /// Identity of the supplied basis.
+        found: BasisId,
+    },
+}
+
 /// A temperament mapping, image, or kernel operation was rejected.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]

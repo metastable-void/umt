@@ -32,6 +32,7 @@ pub mod kernel;
 pub mod map;
 pub mod representative;
 pub mod splitting;
+pub mod unit;
 
 #[doc(inline)]
 pub use crate::temperament::edo::{Exactness, PatentVal};
@@ -52,3 +53,5 @@ pub use crate::temperament::representative::{
 };
 #[doc(inline)]
 pub use crate::temperament::splitting::{HomomorphicSplit, LinearSplit};
+#[doc(inline)]
+pub use crate::temperament::unit::{EquivalenceDomain, UnitEquivalence};

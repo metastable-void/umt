@@ -20,7 +20,9 @@ convenience.
 src/
   lib.rs                  crate root, no_std attribute, re-exports
   error.rs                typed error enums
+  context.rs              TheoryContext, wire-form references
   algebra/
+    quotient.rs           QuotientGroup: Z^n / L by structure theorem
     integer.rs            Z, exact round(n log2 p/q), L3 log helpers
     rational.rs           Q
     rounding.rs           RoundingConvention
@@ -31,17 +33,20 @@ src/
     basis.rs              BasisId, GeneratorId, Basis, RawBasis, BasisBuilder
     monzo.rs              Monzo with basis-checked arithmetic
     valuation.rs          PositiveQ, PositiveFinite, RealValuation
+    complexity.rs         declared complexity profiles, weighted l1, Tenney
   temperament/
     map.rs                RawTemperamentMap, TemperamentMap, exact preimages
     image.rs              LatticeId, AmbientLattice/Elem, ImageLattice/Elem
     kernel.rs             KernelLattice/Elem, saturation policy and report
     splitting.rs          HomomorphicSplit, LinearSplit
     representative.rs     RepresentativePolicy, LiftDecision, StructuralLens
+    unit.rs               UnitEquivalence on the ambient or reachable group
     edo.rs                PatentVal, Exactness
   realization/
     provenance.rs         ProvenanceId
   io/
     text.rs               canonical exact-value text codec
+    version.rs            UmtSchemaVersion, compatibility rule
     serde_exact.rs        serde adapters (feature `serde`)
 ```
 
@@ -54,14 +59,14 @@ the general machinery that are meaningful only because the ambient rank is 1;
 
 Following the staging of the implementation prompt, in order:
 
-1. `proportion/complexity.rs` - `group_length`, `lattice_seminorm`,
-   `lattice_norm`, `cost` as distinct declared profiles (F5, F34). This also
-   unlocks a genuine minimum-complexity representative policy, which is the
-   thing musicians actually want from detempering.
-2. Unit equivalence as a constructed quotient (UMT-3.2 section 1.9), which
-   completes F3 and F22.
-3. `pitch/`, then `time/`, then `score/`, then `realization/`, then the native
-   container in `io/`.
+1. A minimum-complexity representative policy, now that complexity profiles
+   exist to define what "simplest" means. This is what makes detempering
+   produce spellings a musician would write.
+2. `pitch/` - interval and point torsors, references, regular tuning,
+   non-regular realization, trajectories, chords, voice leading.
+3. `time/` - exact durations, rhythm trees, meter and grouping, tempo maps,
+   quantizers, temporal constraint networks. The largest single stage.
+4. `score/`, then `realization/`, then the native container in `io/`.
 
 ## Why the normal forms are what they are
 

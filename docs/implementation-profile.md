@@ -117,10 +117,8 @@ Loading goes through the same validating constructors as in-memory
 construction: `RawBasis` is the unvalidated wire form and `Basis` is reachable
 from it only through `TryFrom`.
 
-Objects that reference shared context - monzos, mappings, events - are not
-serializable yet. Inlining a basis definition into every monzo would violate
-section 6.3; referencing it needs the registry that arrives with
-`TheoryContext`.
+Objects that reference shared context serialize as references resolved against
+a `TheoryContext`; see D17.
 
 ## D8. Lattice identity is the canonical Hermite basis **binding**
 
@@ -222,7 +220,61 @@ prints both side by side, because the contrast is the lesson.
 `OffsetPolicy` composes over any policy rather than only over a splitting, so
 an adaptive policy can be layered on either base.
 
-## D15. `divisions = 0` is a legal mapping
+## D15. A complexity declares its laws, and the declaration is checked
+
+UMT-3.2 section 9.2 refuses to use the bare word *norm*, so neither does this
+crate. `ComplexityProfile` is a field of every complexity function, and the
+conformance suite checks the claim rather than trusting it - fixture F34 is
+precisely a function that looks like a norm and is not one.
+
+Two consequences in the API:
+
+- `WeightedL1` derives its profile from its weights. All positive gives
+  `LatticeNorm`; any zero gives `LatticeSeminorm`, because a zero weight puts
+  a nonzero element in the null set. That is how section 1.3.3 models
+  octave-equivalent complexity, and it means the weaker claim is made
+  automatically rather than by the caller remembering to.
+- Weights are never derived from logarithms without validation.
+  `LogWeightedL1::from_log2_valuations` rejects a generator whose valuation is
+  at most 1, since `log2` of it is not a usable norm weight. That rejection is
+  fixture F5.
+
+An exact complexity reports an exact value; Tenney height reports `None` from
+`exact_value`, because its value really is an L3 real observation and pretending
+otherwise would be the layer violation the whole design is built to avoid.
+
+## D16. The context registry rejects redefinition **binding**
+
+`TheoryContextBuilder` accepts the identical definition twice and rejects a
+different definition under an identifier already in use. Taking the last
+writer would silently change the meaning of every monzo that referred to the
+earlier one.
+
+Registering a mapping also registers its domain basis and ambient lattice, so
+a context that can resolve a mapping can always resolve what the mapping
+refers to.
+
+## D17. Context-dependent objects serialize as references **binding**
+
+A monzo on the wire is `MonzoRef`: a basis identifier plus exact exponents. A
+mapping is `TemperamentMapRef`: two identifiers plus an exact matrix. Neither
+inlines a definition, as UMT-3.2 section 6.3 requires, and neither is
+meaningful without the context that resolves it - which is the honest
+representation of a value whose identity depends on shared context.
+
+Round-tripping therefore takes two steps: deserialize the reference, then
+resolve it. There is no single-step path, because a one-step path would have
+to invent a basis.
+
+## D18. Schema compatibility is one-directional **binding**
+
+A reader accepts a document whose major version matches and whose minor
+version does not exceed its own. A higher minor version means the document may
+carry fields this build does not know, and prompt section 54 forbids
+interpreting unknown fields as current semantics, so such a document is
+rejected rather than guessed at.
+
+## D19. `divisions = 0` is a legal mapping
 
 The zero mapping has image `{0}`, which section 1.6 fixes through the
 convention `gcd(0, ..., 0) = 0`. In the general API its image has rank 0 and
@@ -230,7 +282,7 @@ an image element has an empty coordinate vector, which is the correct answer.
 Only the rank-one scalar convenience API of `PatentVal` has nothing to return,
 and it reports `TrivialImage` rather than pretending the answer is zero.
 
-## D16. Rank-0 bases are permitted
+## D20. Rank-0 bases are permitted
 
 A basis with no generators spans the trivial lattice. Nothing breaks, and
 rejecting it would be an invented restriction.
@@ -248,9 +300,14 @@ rejecting it would be an invented restriction.
   certificate format to verify against; the contract is declared metadata, as
   section 1.1.2 requires, and is never inferred.
 - `ProvenanceId` exists without the record arena it refers to.
-- Matrices, lattices, and mappings are not serializable yet. The canonical
-  integer-matrix encoding is defined once, with the native container (UMT-3.2
-  section 10.9), rather than ad hoc per type.
+- The native container of UMT-3.2 section 8.8 does not exist yet: the pieces
+  it will assemble - the schema version, the exact text codec, the reference
+  forms - are in place, but nothing writes a whole document.
+- `ProvenanceRecord` and its arena are not implemented, so `ProvenanceId`
+  currently points at nothing.
+- `TheoryContext` registers bases, ambient lattices, and mappings. Named
+  representative policies, tunings, and notation systems join it as those
+  layers arrive.
 - Smith normal form uses the textbook pivot-and-reduce algorithm, whose
   intermediate entries can grow well beyond the input size. Exactness is never
   at risk, since every entry is a `Z`, but a modular or fraction-free variant

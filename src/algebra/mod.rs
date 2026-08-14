@@ -18,6 +18,7 @@ pub mod integer;
 pub mod lattice;
 pub mod matrix;
 pub mod normal_form;
+pub mod quotient;
 pub mod rational;
 pub mod rounding;
 
@@ -29,6 +30,8 @@ pub use crate::algebra::lattice::Sublattice;
 pub use crate::algebra::matrix::IntMatrix;
 #[doc(inline)]
 pub use crate::algebra::normal_form::{HermiteNormalForm, SmithNormalForm};
+#[doc(inline)]
+pub use crate::algebra::quotient::QuotientGroup;
 #[doc(inline)]
 pub use crate::algebra::rational::Q;
 #[doc(inline)]

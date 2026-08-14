@@ -7,14 +7,18 @@ choice made explicit.
 
 ## Status
 
-Early. Implemented: the exact proportion core, exact integer matrices with
-Smith and canonical Hermite normal forms, free lattices, regular temperament
-mappings with their image and kernel lattices, comma-subgroup saturation
-validation, equal divisions, homomorphic splittings, representative policies,
-and the structural quotient lens. Not implemented: complexity profiles, pitch,
-time, score, realization, and the native container. See `docs/architecture.md`
-for the staging plan and `docs/conformance.md` for which UMT-3.2 fixtures are
-covered.
+Early, but the whole exact structural core is in place: the proportion
+lattice, exact integer matrices with Smith and canonical Hermite normal forms,
+free lattices and quotients, regular temperament mappings with their image and
+kernel lattices, comma-subgroup saturation validation, equal divisions,
+homomorphic splittings, representative policies, the structural quotient lens,
+unit equivalence, declared complexity profiles, and an immutable theory
+context with reference-based serialization.
+
+**Ten of the thirty-five UMT-3.2 fixtures pass**, and every remaining one
+depends on a layer that is not built yet: pitch, time, score, realization, or
+device. See `docs/architecture.md` for the staging plan and
+`docs/conformance.md` for the fixture matrix.
 
 This crate does not yet claim UMT-3.2 conformance. Conformance is claimed only
 when the applicable mandatory fixture suite passes.

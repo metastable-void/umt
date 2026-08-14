@@ -11,6 +11,7 @@
 //! and belong to L3.
 
 pub mod basis;
+pub mod complexity;
 pub mod monzo;
 pub mod valuation;
 
@@ -19,6 +20,8 @@ pub use crate::proportion::basis::{
     Basis, BasisBuilder, BasisGenerator, BasisId, GeneratorId, GeneratorValuation,
     IndependenceContract, RawBasis,
 };
+#[doc(inline)]
+pub use crate::proportion::complexity::{Complexity, ComplexityProfile, LogWeightedL1, WeightedL1};
 #[doc(inline)]
 pub use crate::proportion::monzo::Monzo;
 #[doc(inline)]

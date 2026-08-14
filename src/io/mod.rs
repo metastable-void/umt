@@ -15,6 +15,7 @@
 //!   both parse but only `"3/1"` is written.
 
 pub mod text;
+pub mod version;
 
 #[cfg(feature = "serde")]
 pub mod serde_exact;

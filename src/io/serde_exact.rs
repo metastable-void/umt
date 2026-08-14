@@ -33,6 +33,40 @@ pub mod z {
     }
 }
 
+/// A sequence of exact integers as canonical decimal text.
+pub mod vec_z {
+    use alloc::string::String;
+    use alloc::vec::Vec;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    use crate::algebra::Z;
+    use crate::io::text::{z_from_str, z_to_string};
+
+    /// Writes exact integers as decimal text.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the serializer's own errors.
+    pub fn serialize<S: Serializer>(values: &[Z], serializer: S) -> Result<S::Ok, S::Error> {
+        let text: Vec<String> = values.iter().map(z_to_string).collect();
+        text.serialize(serializer)
+    }
+
+    /// Reads exact integers from decimal text.
+    ///
+    /// # Errors
+    ///
+    /// Fails if any entry is not a decimal integer.
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<Z>, D::Error> {
+        let text = Vec::<String>::deserialize(deserializer)?;
+        text.iter()
+            .map(|entry| {
+                z_from_str(entry).ok_or_else(|| serde::de::Error::custom("malformed exact integer"))
+            })
+            .collect()
+    }
+}
+
 /// Exact rational as canonical `"numerator/denominator"` text.
 pub mod q {
     use alloc::string::String;
