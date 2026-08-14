@@ -20,10 +20,13 @@
 
 use alloc::string::String;
 use alloc::sync::Arc;
+use alloc::vec::Vec;
 
-use crate::error::PitchError;
+use crate::algebra::Z;
+use crate::context::TheoryContext;
+use crate::error::{ContextError, PitchError};
 use crate::proportion::monzo::Monzo;
-use crate::temperament::image::{AmbientElem, ImageElem};
+use crate::temperament::image::{AmbientElem, AmbientLattice, ImageElem, LatticeId};
 
 /// Stable identity of a designated reference point.
 ///
@@ -221,9 +224,61 @@ impl<E: IntervalGroupElement> PitchPoint<E> {
     }
 }
 
+/// A pitch point in wire form: an origin, a lattice reference, and exact
+/// coordinates.
+///
+/// UMT layer: L2, exact. Like [`crate::context::MonzoRef`], this carries no
+/// lattice *definition*, only the identifier of one, so it is meaningless
+/// without the [`TheoryContext`] that defines it (UMT-3.2 section 6.3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct PitchPointRef {
+    /// Identifier of the designated reference point.
+    pub origin: PitchOrigin,
+    /// Identifier of the lattice the offset lives in.
+    pub lattice: LatticeId,
+    /// Exact offset coordinates, one per lattice generator.
+    #[cfg_attr(feature = "serde", serde(with = "crate::io::serde_exact::vec_z"))]
+    pub coordinates: Vec<Z>,
+}
+
+impl PitchPointRef {
+    /// Produces the wire form of a point over an ambient lattice.
+    #[must_use]
+    pub fn of_ambient(point: &PitchPoint<AmbientElem>) -> Self {
+        Self {
+            origin: point.origin().clone(),
+            lattice: point.offset().lattice().id().clone(),
+            coordinates: point.offset().coordinates().to_vec(),
+        }
+    }
+
+    /// Resolves this reference against a context.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ContextError::UnknownAmbient`] if the lattice is not
+    /// registered, and [`ContextError::Temperament`] if the coordinate count
+    /// does not match its rank.
+    pub fn resolve_ambient(
+        &self,
+        context: &TheoryContext,
+    ) -> Result<PitchPoint<AmbientElem>, ContextError> {
+        let lattice: &Arc<AmbientLattice> =
+            context
+                .ambient(&self.lattice)
+                .ok_or_else(|| ContextError::UnknownAmbient {
+                    id: self.lattice.clone(),
+                })?;
+        let offset = lattice.element(self.coordinates.clone())?;
+        Ok(PitchPoint::new(self.origin.clone(), offset))
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{PitchOrigin, PitchPoint};
+    use super::{PitchOrigin, PitchPoint, PitchPointRef};
+    use crate::context::TheoryContext;
     use crate::error::PitchError;
     use crate::proportion::Basis;
     use crate::temperament::image::AmbientLattice;
@@ -316,5 +371,23 @@ mod tests {
         let seven = Basis::primes("umt:prime:2.3.7", &[2, 3, 7]).unwrap();
         let point = PitchPoint::new(PitchOrigin::new("umt:origin:c4"), five.zero());
         assert!(point.translate(&seven.monzo([1, 0, 0]).unwrap()).is_err());
+    }
+
+    #[test]
+    fn points_round_trip_through_their_reference_form() {
+        let steps = AmbientLattice::new("umt:edo:12", 1);
+        let context = TheoryContext::builder().ambient(&steps).unwrap().build();
+        let point = PitchPoint::new(
+            PitchOrigin::new("umt:origin:c4"),
+            steps.element([7i64]).unwrap(),
+        );
+
+        let reference = PitchPointRef::of_ambient(&point);
+        assert_eq!(reference.origin, PitchOrigin::new("umt:origin:c4"));
+        assert_eq!(reference.resolve_ambient(&context).unwrap(), point);
+
+        // An unregistered lattice does not silently resolve.
+        let empty = TheoryContext::builder().build();
+        assert!(reference.resolve_ambient(&empty).is_err());
     }
 }

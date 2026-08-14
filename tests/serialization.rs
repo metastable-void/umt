@@ -9,12 +9,14 @@
 use umt::algebra::matrix::IntMatrix;
 use umt::context::{MonzoRef, TemperamentMapRef, TheoryContext};
 use umt::io::version::{NATIVE_SCHEMA_VERSION, UmtSchemaVersion};
+use umt::pitch::{Edge, PitchOrigin, PitchPoint, PitchPointRef, VoiceId, VoiceLeading, VoiceSet};
 use umt::proportion::{
     Basis, IndependenceContract, NonNegativeFinite, PositiveFinite, PositiveQ, RawBasis,
     RealValuation,
 };
 use umt::realization::provenance::ProvenanceId;
 use umt::temperament::{AmbientLattice, TemperamentMap};
+use umt::time::{Seconds, TimeSpan};
 use umt::{Q, Z};
 
 fn huge_rational() -> Q {
@@ -178,4 +180,49 @@ fn out_of_range_values_are_rejected_on_load() {
 
     let result: Result<PositiveFinite, _> = serde_json::from_str("0.0");
     assert!(result.is_err(), "a zero real valuation must be rejected");
+}
+
+#[test]
+fn pitch_layer_objects_round_trip_and_revalidate() {
+    let steps = AmbientLattice::new("umt:edo:12", 1);
+    let context = TheoryContext::builder().ambient(&steps).unwrap().build();
+
+    // A point carries an origin, a lattice reference, and exact coordinates.
+    let point = PitchPoint::new(
+        PitchOrigin::new("umt:origin:a4"),
+        steps.element([7i64]).unwrap(),
+    );
+    let json = serde_json::to_string(&PitchPointRef::of_ambient(&point)).unwrap();
+    assert!(
+        json.contains("\"7\""),
+        "coordinates are exact decimal text, not floating point: {json}"
+    );
+    let parsed: PitchPointRef = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed.resolve_ambient(&context).unwrap(), point);
+
+    // A voice-leading span revalidates its edges against its voice sets.
+    let span = VoiceLeading::new(
+        VoiceSet::new([VoiceId::new("a"), VoiceId::new("b")]).unwrap(),
+        VoiceSet::new([VoiceId::new("x")]).unwrap(),
+        [Edge::new(VoiceId::new("a"), VoiceId::new("x"))],
+    )
+    .unwrap();
+    let json = serde_json::to_string(&span).unwrap();
+    assert_eq!(serde_json::from_str::<VoiceLeading>(&json).unwrap(), span);
+
+    let forged = json.replace("\"a\",\"target\"", "\"ghost\",\"target\"");
+    assert_ne!(forged, json, "the test data must actually have been edited");
+    assert!(
+        serde_json::from_str::<VoiceLeading>(&forged).is_err(),
+        "an edge naming a voice outside the source set must be rejected on load"
+    );
+
+    // A time span revalidates its ordering.
+    let reversed = "{\"start\":2.0,\"end\":1.0}";
+    assert!(
+        serde_json::from_str::<TimeSpan>(reversed).is_err(),
+        "a reversed span must be rejected on load"
+    );
+    let forwards: TimeSpan = serde_json::from_str("{\"start\":1.0,\"end\":2.0}").unwrap();
+    assert_eq!(forwards.duration(), Seconds::new(1.0).unwrap());
 }

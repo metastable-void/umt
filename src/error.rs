@@ -214,6 +214,45 @@ pub enum ContextError {
     Temperament(#[from] TemperamentError),
 }
 
+/// A physical-time quantity or span was rejected.
+///
+/// Structural beat time is exact and will report its own failures; everything
+/// here is about the measured, real-valued timeline of UMT-3.2 section 5.1.
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+#[non_exhaustive]
+pub enum TimeError {
+    /// A time quantity was not finite.
+    #[error("physical time quantities must be finite")]
+    NonFiniteQuantity,
+
+    /// A span was given endpoints in the wrong order.
+    ///
+    /// A reversed span in a document is a defect, not a direction, so it is
+    /// rejected rather than silently normalized.
+    #[error("time span runs backwards: [{start}, {end}]")]
+    ReversedSpan {
+        /// The declared start.
+        start: f64,
+        /// The declared end.
+        end: f64,
+    },
+
+    /// A time outside a closed span was supplied where one inside was
+    /// required.
+    ///
+    /// A trajectory is defined on its domain and nowhere else (UMT-3.2 section
+    /// 4.7), so extrapolation is refused rather than guessed.
+    #[error("time {time} is outside the span [{start}, {end}]")]
+    OutsideSpan {
+        /// The offending time.
+        time: f64,
+        /// Start of the span.
+        start: f64,
+        /// End of the span.
+        end: f64,
+    },
+}
+
 /// A pitch quantity, point, or realization was rejected.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 #[non_exhaustive]
@@ -254,6 +293,76 @@ pub enum PitchError {
         /// Sizes supplied.
         found: usize,
     },
+
+    /// A voice identity was used twice where each must be distinct.
+    ///
+    /// Deduplicating silently would turn a two-voice doubling into one voice,
+    /// which is exactly the loss UMT-3.2 section 4.4.4 forbids.
+    #[error("voice `{voice}` appears more than once")]
+    DuplicateVoice {
+        /// The repeated identity.
+        voice: crate::pitch::chord::VoiceId,
+    },
+
+    /// A lookup or an edge named a voice that is not present.
+    #[error("voice `{voice}` is not in this voice set")]
+    UnknownVoice {
+        /// The unresolved identity.
+        voice: crate::pitch::chord::VoiceId,
+    },
+
+    /// A voice-leading span was applied to chords that are not its endpoints.
+    #[error("this voice leading does not connect the voice sets it was given")]
+    VoiceSetMismatch,
+
+    /// Balanced transport was asked to compare states of different total mass.
+    ///
+    /// Not a defect in the input: UMT-3.2 section 4.4.4 says classical
+    /// balanced transport simply does not solve this case, so an unbalanced,
+    /// partial, or edit profile has to be selected instead.
+    #[error("balanced transport requires equal total mass: {left} versus {right} voices")]
+    UnequalMass {
+        /// Voices on the left.
+        left: usize,
+        /// Voices on the right.
+        right: usize,
+    },
+
+    /// A transport exponent below 1 was supplied.
+    ///
+    /// The classical `W_p` metric claims require `p >= 1` (UMT-3.2 section
+    /// 9.5), so a smaller exponent is rejected rather than accepted with the
+    /// claims quietly withdrawn.
+    #[error("a W_p transport exponent must be at least 1, found {exponent}")]
+    NonMetricExponent {
+        /// The rejected exponent.
+        exponent: f64,
+    },
+
+    /// A declared cost parameter was negative or not finite.
+    #[error("declared cost parameters must be non-negative and finite")]
+    InvalidCostParameter,
+
+    /// An exhaustive search would have exceeded its budget.
+    ///
+    /// Raised only where an approximate answer would be wrong to return, such
+    /// as a distance that claims metric laws and therefore has to be the true
+    /// minimum. Optimizers that may approximate report
+    /// [`crate::realization::optimization::OptimizationOutcome::Approximate`]
+    /// instead.
+    #[error("the exhaustive search exceeded its budget of {budget} candidates")]
+    SearchBudgetExceeded {
+        /// The budget that was exceeded.
+        budget: usize,
+    },
+
+    /// A reconstruction was requested from an empty sampling.
+    #[error("this sampling contains no samples")]
+    NoSamples,
+
+    /// An underlying physical-time operation failed.
+    #[error(transparent)]
+    Time(#[from] TimeError),
 
     /// An underlying monzo operation failed.
     #[error(transparent)]

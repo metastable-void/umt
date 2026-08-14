@@ -2,23 +2,68 @@
 //! (prompt section 47).
 //!
 //! Each test names the law it exercises. Laws for structures that are not
-//! implemented yet - representative policies, torsors, quantization, rhythm
-//! trees - are absent rather than stubbed.
+//! implemented yet - quantization, rhythm trees, tempo maps, temporal
+//! constraints - are absent rather than stubbed.
 
 use std::sync::Arc;
 
 use proptest::prelude::*;
 use umt::algebra::integer::round_n_log2;
 use umt::algebra::normal_form::{HermiteNormalForm, SmithNormalForm};
-use umt::pitch::{LogFrequency, Octaves, PitchOrigin, PitchPoint, RegularTuning};
+use umt::pitch::{
+    AdmissibleFamily, Chord, ChordDistance, CostQuestion, Edge, LogFrequency, LogPitchDistance,
+    MetricClaim, Octaves, PitchOrigin, PitchPoint, RegularTuning, SpanCostModel, SpanPenalties,
+    TransportProfile, VoiceId, VoiceLeading, VoiceSet,
+};
 use umt::temperament::{
-    AmbientLattice, HomomorphicSplit, KernelElem, LinearSplit, OffsetPolicy, RepresentativePolicy,
-    SplitPolicy, StructuralLens, TemperamentMap,
+    AmbientElem, AmbientLattice, HomomorphicSplit, KernelElem, LinearSplit, OffsetPolicy,
+    RepresentativePolicy, SplitPolicy, StructuralLens, TemperamentMap,
 };
 use umt::{Basis, IntMatrix, PatentVal, RoundingConvention, Sublattice, Z};
 
 fn five_limit() -> Arc<Basis> {
     Basis::primes("umt:prime:2.3.5", &[2, 3, 5]).expect("valid prime basis")
+}
+
+/// The 12-EDO step lattice, used as the interval group for the pitch-layer
+/// laws.
+fn twelve_edo() -> Arc<AmbientLattice> {
+    AmbientLattice::new("umt:edo:12", 1)
+}
+
+fn ground_cost() -> LogPitchDistance<AmbientLattice> {
+    LogPitchDistance::new(RegularTuning::equal_divisions(&twelve_edo(), 12).expect("rank 1"))
+}
+
+/// A chord whose voices are named `v0, v1, ...` in the order given.
+///
+/// The target side of a voice leading needs its own names, so it is built with
+/// [`named_chord`] and the prefix `w`.
+fn chord_of(steps: &[i64]) -> Chord<AmbientElem> {
+    named_chord("v", steps)
+}
+
+fn named_chord(prefix: &str, steps: &[i64]) -> Chord<AmbientElem> {
+    let lattice = twelve_edo();
+    let origin = PitchOrigin::new("umt:origin:c4");
+    Chord::from_voices(steps.iter().enumerate().map(|(index, step)| {
+        (
+            VoiceId::new(&format!("{prefix}{index}")),
+            PitchPoint::new(
+                origin.clone(),
+                lattice.element([*step]).expect("rank 1 lattice"),
+            ),
+        )
+    }))
+    .expect("distinct voice names, one shared origin")
+}
+
+/// Edges in a canonical order, so two spans that differ only in edge order
+/// compare equal.
+fn sorted_edges(span: &VoiceLeading) -> Vec<Edge> {
+    let mut edges = span.edges().to_vec();
+    edges.sort();
+    edges
 }
 
 fn seven_limit() -> Arc<Basis> {
@@ -434,6 +479,258 @@ proptest! {
         let error = tuning.error(&map, &comma).unwrap().get();
         let just = comma.log2_valuation_f64().unwrap();
         prop_assert!((error + just).abs() < 1e-9, "error {error}, just {just}");
+    }
+
+    /// UMT-3.2 section 4.3: forgetting voice labels keeps multiplicity, and
+    /// the total is always the voice count.
+    ///
+    /// This is the law that makes fixture F8 statable: a doubling is a
+    /// multiplicity, and a view that discards it has to be asked for.
+    #[test]
+    fn chord_views_lose_exactly_what_they_say_they_lose(
+        pitches in prop::collection::vec(-24i64..=24, 1..=6),
+    ) {
+        let chord = chord_of(&pitches);
+        let multiset = chord.forget_voice_labels();
+
+        prop_assert_eq!(chord.len(), pitches.len());
+        prop_assert_eq!(multiset.total_len(), pitches.len());
+        prop_assert!(multiset.distinct_len() <= multiset.total_len());
+        prop_assert_eq!(multiset.expand().len(), pitches.len());
+
+        // Multiplicity agrees with a direct count over the voices.
+        for (_, point) in chord.iter() {
+            let counted = chord.iter().filter(|(_, other)| *other == point).count();
+            prop_assert_eq!(multiset.multiplicity(point), counted);
+        }
+
+        // The second, separately named step is the one that erases it.
+        prop_assert_eq!(multiset.forget_multiplicity().len(), multiset.distinct_len());
+        prop_assert_eq!(chord.has_doubling(), multiset.distinct_len() < pitches.len());
+    }
+
+    /// UMT-3.2 section 4.3: disjoint union is associative, commutative on
+    /// disjoint operands, and has the empty voice set as its unit.
+    #[test]
+    fn voice_sets_form_a_partial_commutative_monoid(
+        left in prop::collection::vec(0usize..12, 0..=4),
+        right in prop::collection::vec(12usize..24, 0..=4),
+        third in prop::collection::vec(24usize..36, 0..=4),
+    ) {
+        let build = |indices: &[usize]| {
+            let mut set = VoiceSet::empty();
+            for index in indices {
+                set.insert(VoiceId::new(&format!("v{index}")));
+            }
+            set
+        };
+        let (a, b, c) = (build(&left), build(&right), build(&third));
+
+        // Unit.
+        prop_assert_eq!(a.disjoint_union(&VoiceSet::empty()).unwrap(), a.clone());
+        prop_assert_eq!(VoiceSet::empty().disjoint_union(&a).unwrap(), a.clone());
+
+        // Commutative, on operands that are disjoint by construction.
+        prop_assert_eq!(
+            a.disjoint_union(&b).unwrap(),
+            b.disjoint_union(&a).unwrap()
+        );
+
+        // Associative.
+        prop_assert_eq!(
+            a.disjoint_union(&b).unwrap().disjoint_union(&c).unwrap(),
+            a.disjoint_union(&b.disjoint_union(&c).unwrap()).unwrap()
+        );
+
+        // And it is *partial*: a shared identity is a defect, not a merge.
+        if !a.is_empty() {
+            prop_assert!(a.disjoint_union(&a).is_err());
+        }
+    }
+
+    /// UMT-3.2 section 4.4.1: composition of spans by pullback is
+    /// associative, and the identity span is neutral.
+    #[test]
+    fn voice_leading_composition_is_associative(
+        first in prop::collection::vec((0usize..3, 0usize..3), 0..=4),
+        second in prop::collection::vec((0usize..3, 0usize..3), 0..=4),
+        third in prop::collection::vec((0usize..3, 0usize..3), 0..=4),
+    ) {
+        let names = |prefix: &str| {
+            VoiceSet::new((0..3).map(|i| VoiceId::new(&format!("{prefix}{i}")))).unwrap()
+        };
+        let (v1, v2, v3, v4) = (names("a"), names("b"), names("c"), names("d"));
+        let span = |source: &VoiceSet, target: &VoiceSet, pairs: &[(usize, usize)], from: &str, to: &str| {
+            VoiceLeading::new(
+                source.clone(),
+                target.clone(),
+                pairs.iter().map(|(i, j)| {
+                    Edge::new(VoiceId::new(&format!("{from}{i}")), VoiceId::new(&format!("{to}{j}")))
+                }),
+            )
+            .unwrap()
+        };
+
+        let f = span(&v1, &v2, &first, "a", "b");
+        let g = span(&v2, &v3, &second, "b", "c");
+        let h = span(&v3, &v4, &third, "c", "d");
+
+        // Associativity. Edge order can differ, so compare as multisets.
+        let left = f.compose(&g).unwrap().compose(&h).unwrap();
+        let right = f.compose(&g.compose(&h).unwrap()).unwrap();
+        prop_assert_eq!(left.source(), right.source());
+        prop_assert_eq!(left.target(), right.target());
+        prop_assert_eq!(sorted_edges(&left), sorted_edges(&right));
+
+        // Identity is neutral on both sides.
+        prop_assert_eq!(
+            sorted_edges(&VoiceLeading::identity(&v1).compose(&f).unwrap()),
+            sorted_edges(&f)
+        );
+        prop_assert_eq!(
+            sorted_edges(&f.compose(&VoiceLeading::identity(&v2)).unwrap()),
+            sorted_edges(&f)
+        );
+    }
+
+    /// UMT-3.2 section 4.4.2: the declared span cost really is the sum of its
+    /// five terms, and every term is driven by the span's event counts.
+    #[test]
+    fn declared_span_cost_is_the_sum_of_its_terms(
+        from_pitches in prop::collection::vec(-12i64..=12, 1..=4),
+        to_pitches in prop::collection::vec(-12i64..=12, 1..=4),
+        pairs in prop::collection::vec((0usize..4, 0usize..4), 0..=5),
+    ) {
+        let from = chord_of(&from_pitches);
+        let to = named_chord("w", &to_pitches);
+        let edges: Vec<Edge> = pairs
+            .iter()
+            .filter(|(i, j)| *i < from_pitches.len() && *j < to_pitches.len())
+            .map(|(i, j)| Edge::new(VoiceId::new(&format!("v{i}")), VoiceId::new(&format!("w{j}"))))
+            .collect();
+        let span = VoiceLeading::new(from.voice_set(), to.voice_set(), edges).unwrap();
+
+        let penalties = SpanPenalties { split: 0.25, merge: 0.5, birth: 1.0, death: 2.0 };
+        let model = SpanCostModel::new(ground_cost(), 1.0, penalties).unwrap();
+        let cost = model.declared_cost(&span, &from, &to).unwrap();
+        let shape = cost.shape();
+
+        prop_assert_eq!(cost.split(), penalties.split * shape.splits as f64);
+        prop_assert_eq!(cost.merge(), penalties.merge * shape.merges as f64);
+        prop_assert_eq!(cost.birth(), penalties.birth * shape.entries as f64);
+        prop_assert_eq!(cost.death(), penalties.death * shape.exits as f64);
+        prop_assert!(
+            (cost.total()
+                - (cost.movement() + cost.split() + cost.merge() + cost.birth() + cost.death()))
+            .abs()
+                < 1e-12
+        );
+        prop_assert_eq!(cost.question(), &CostQuestion::DeclaredSpan);
+
+        // The movement term is the summed displacement, edge for edge.
+        let expected: f64 = span
+            .displacements(&from, &to)
+            .unwrap()
+            .iter()
+            .map(|interval| (interval.coordinates()[0].to_string().parse::<f64>().unwrap() / 12.0).abs())
+            .sum();
+        prop_assert!((cost.movement() - expected).abs() < 1e-12);
+    }
+
+    /// UMT-3.2 section 4.4.5: a minimum over the admissible family is never
+    /// dearer than a declared span drawn from that same family.
+    #[test]
+    fn the_family_minimum_is_no_worse_than_any_member(
+        from_pitches in prop::collection::vec(-12i64..=12, 1..=4),
+        to_pitches in prop::collection::vec(-12i64..=12, 1..=4),
+        matching in prop::collection::vec(0usize..5, 0..=4),
+    ) {
+        let from = chord_of(&from_pitches);
+        let to = named_chord("w", &to_pitches);
+        let model = SpanCostModel::new(
+            ground_cost(),
+            1.0,
+            SpanPenalties { split: 0.0, merge: 0.0, birth: 0.4, death: 0.4 },
+        )
+        .unwrap();
+
+        // An arbitrary member of the family: each source voice takes at most
+        // one distinct target.
+        let mut used = vec![false; to_pitches.len()];
+        let mut edges = Vec::new();
+        for (i, choice) in matching.iter().enumerate().take(from_pitches.len()) {
+            if *choice < to_pitches.len() && !used[*choice] {
+                used[*choice] = true;
+                edges.push(Edge::new(
+                    VoiceId::new(&format!("v{i}")),
+                    VoiceId::new(&format!("w{choice}")),
+                ));
+            }
+        }
+        let member = VoiceLeading::new(from.voice_set(), to.voice_set(), edges).unwrap();
+        let declared = model.declared_cost(&member, &from, &to).unwrap();
+
+        let outcome = model.minimum_over_assignments(&from, &to).unwrap();
+        prop_assert!(outcome.is_optimal());
+        let minimum = outcome.cost().unwrap();
+        prop_assert_eq!(
+            minimum.question(),
+            &CostQuestion::MinimumOverFamily(AdmissibleFamily::PartialAssignment)
+        );
+        prop_assert!(
+            minimum.total() <= declared.total() + 1e-12,
+            "minimum {} exceeded a member at {}",
+            minimum.total(),
+            declared.total()
+        );
+
+        // And the winner really is in the family it claims.
+        let winner = outcome.solution().unwrap();
+        let shape = winner.shape();
+        prop_assert_eq!(shape.splits, 0);
+        prop_assert_eq!(shape.merges, 0);
+    }
+
+    /// UMT-3.2 section 9.5: the distance laws a profile claims are tested on
+    /// the state space it names, not inherited.
+    ///
+    /// The edit profile spans several cardinalities, which is exactly the case
+    /// section 4.4.4 says classical balanced transport does not cover.
+    #[test]
+    fn the_edit_profile_obeys_the_metric_laws(
+        a in prop::collection::vec(-12i64..=12, 1..=3),
+        b in prop::collection::vec(-12i64..=12, 1..=3),
+        c in prop::collection::vec(-12i64..=12, 1..=3),
+        boundary in 0.05f64..1.5,
+        exponent in 1.0f64..3.0,
+    ) {
+        let distance =
+            ChordDistance::new(ground_cost(), exponent, TransportProfile::Edit { boundary })
+                .unwrap();
+        let claim = distance.metric_claim();
+        prop_assert!(
+            matches!(claim, MetricClaim::Metric { .. }),
+            "a positive boundary cost claims the metric laws, got {claim:?}"
+        );
+
+        let (x, y, z) = (chord_of(&a), chord_of(&b), chord_of(&c));
+        let scale = 1.0 + boundary * 6.0;
+
+        // Identity of indiscernibles, both directions.
+        prop_assert_eq!(distance.distance(&x, &x).unwrap(), 0.0);
+        if x.forget_voice_labels() != y.forget_voice_labels() {
+            prop_assert!(distance.distance(&x, &y).unwrap() > 0.0);
+        }
+
+        // Symmetry.
+        let there = distance.distance(&x, &y).unwrap();
+        let back = distance.distance(&y, &x).unwrap();
+        prop_assert!((there - back).abs() < 1e-9 * scale);
+
+        // Triangle inequality.
+        let direct = distance.distance(&x, &z).unwrap();
+        let via = there + distance.distance(&y, &z).unwrap();
+        prop_assert!(direct <= via + 1e-9 * scale, "{direct} > {via}");
     }
 
     /// Prompt section 10: the Smith normal form reconstructs its input, its

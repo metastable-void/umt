@@ -315,7 +315,105 @@ the record cannot be omitted and a tuning of one group cannot be handed an
 element of the other. For 6-EDO that is the difference between a generator of
 one step and a generator of two.
 
-## D22. `divisions = 0` is a legal mapping
+## D22. A chord's points share one origin **binding**
+
+UMT-3.2 section 4.3 writes a chord as `c: V_c -> P` for a single pitch-point
+space `P`. This crate enforces that: `Chord::assign` rejects a point measured
+from a different origin. Without it, the interval between two of a chord's own
+voices would be undefined, and so would every voice-leading displacement.
+
+An emptied chord forgets its origin and can be reused, which keeps the empty
+chord a genuine neutral element for juxtaposition rather than one that has
+silently committed to an origin.
+
+## D23. The span cost accounting convention is stated, because 4.4.2 does not
+
+Section 4.4.2 gives `C = C_move + C_split + C_merge + C_birth + C_death` and
+leaves the counts to the implementation. This crate charges:
+
+- one movement term per *edge*, `d(e)^p` for the declared ground cost;
+- `max(0, outdegree - 1)` splits per source voice, so a three-way fan is two
+  splits;
+- `max(0, indegree - 1)` merges per target voice;
+- one birth per target voice with no incoming edge;
+- one death per source voice with no outgoing edge.
+
+`SpanShape` reports all of these plus a `continuations` count, which is a
+*subset* of `moves` rather than a sixth term. Any other convention is
+defensible; the point is that this one is written down and observable rather
+than inferred from the total.
+
+## D24. Optimizers over voice leadings are exhaustive and budgeted
+
+Prompt section 22 says to implement the structural span model first and not to
+prioritize sophisticated optimal transport, so `minimum_over_assignments` and
+`ChordDistance` enumerate candidates rather than running an assignment solver.
+Two consequences, both deliberate:
+
+- Enumeration is tie-aware for free, so a plateau is reported as
+  `OptimizationOutcome::Multiple` rather than resolved silently. An
+  `O(n^3)` solver would have to work to recover that.
+- Where the search cannot be completed, an *optimizer* downgrades to
+  `Approximate { SearchedRegion }`, but a *distance* that claims metric laws
+  returns `SearchBudgetExceeded` instead. A metric has to be the true minimum,
+  so refusing is the only honest answer.
+
+The default budget of 200000 candidates covers every partial assignment
+between two seven-voice chords and every permutation of eight voices. A
+Jonker-Volgenant or Kuhn-Munkres solver is the obvious later replacement for
+the non-tie-aware paths.
+
+## D25. Balanced transport is exact by Birkhoff, not by a linear program
+
+For equal-cardinality uniform measures the optimal coupling is attained at a
+permutation, so minimizing over `S_n` gives classical `W_p` exactly. Under
+`MassProfile::NormalizedProbability` with `n` and `m` voices, both measures
+are refined to `lcm(n, m)` atoms of equal mass first, which reduces the
+unequal case to the same permutation search. That is why no transportation
+linear program appears anywhere in this crate, and also why the search budget
+binds sooner on that path.
+
+## D26. The edit profile's metric claim is unconditional, and says why
+
+An earlier reading of section 9.5 suggested the assignment/edit distance is a
+metric only where the ground distance stays below twice the boundary cost.
+That condition is unnecessary. In an optimal solution no matched pair ever
+costs more than deleting and re-creating it, so the distance is unchanged if
+the ground cost is replaced by the truncation `min(d, 2^(1/p) * boundary)` -
+and a truncated metric is still a metric. The claim reported by
+`metric_claim` therefore states the effective truncated ground cost rather
+than a side condition.
+
+The claim is withdrawn for a zero boundary cost, where identity of
+indiscernibles genuinely fails: a chord is then at distance zero from every
+chord containing it. `tests/properties.rs` exercises symmetry, identity of
+indiscernibles, and the triangle inequality across three different
+cardinalities, which is what section 9.5 asks for.
+
+## D27. Sampling error bounds are derived, not declared
+
+`PitchTrajectory::sample_in_fixed_context` computes its
+`ApproximationGuarantee` from the deviation's analytic Lipschitz constant: an
+`L`-Lipschitz function sampled at spacing `h` is reconstructed within `L h / 2`
+by linear interpolation and `L h` by a zero-order hold. Where no Lipschitz
+bound exists - a step change over zero time - the guarantee is `Unquantified`
+rather than a number nobody proved.
+
+The method name carries the assumption that makes the bound sound: in a fixed
+context `Phi(x, c)` is constant, so the deviation's constant bounds the whole
+trajectory. A varying context has to be sampled through `evaluate_with`, and
+the caller states their own guarantee.
+
+## D28. Physical time arrives before structural time
+
+`src/time/` currently holds only `ClockTime`, `Seconds`, and `TimeSpan`,
+because section 4.7 needs a trajectory domain and the rhythm layer is not
+built. Structural beat time will be a *different* exact type, not a
+constructor of these: section 5.8.3 is explicit that a tempo map is not the
+same kind of object as a pitch tuning, and one shared timeline type would
+erase the distinction the map exists to express.
+
+## D29. `divisions = 0` is a legal mapping
 
 The zero mapping has image `{0}`, which section 1.6 fixes through the
 convention `gcd(0, ..., 0) = 0`. In the general API its image has rank 0 and
@@ -323,7 +421,7 @@ an image element has an empty coordinate vector, which is the correct answer.
 Only the rank-one scalar convenience API of `PatentVal` has nothing to return,
 and it reports `TrivialImage` rather than pretending the answer is zero.
 
-## D23. Rank-0 bases are permitted
+## D30. Rank-0 bases are permitted
 
 A basis with no generators spans the trivial lattice. Nothing breaks, and
 rejecting it would be an invented restriction.

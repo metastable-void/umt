@@ -20,6 +20,7 @@ use alloc::string::String;
 
 /// What an approximate answer is worth.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub enum ApproximationGuarantee<C> {
     /// `J(y) <= J* + epsilon` for the stated `epsilon`.
@@ -44,6 +45,7 @@ pub enum ApproximationGuarantee<C> {
 /// UMT layer: realization policy. `T` is the solution type and `C` the cost
 /// type; neither is assumed to be real-valued, so an exact cost stays exact.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub enum OptimizationOutcome<T, C> {
     /// A unique minimizer, proved optimal.

@@ -11,8 +11,10 @@ pub mod error;
 pub mod io;
 pub mod pitch;
 pub mod proportion;
+mod quantity;
 pub mod realization;
 pub mod temperament;
+pub mod time;
 
 #[doc(inline)]
 pub use crate::algebra::{IntMatrix, Q, RoundingConvention, Sublattice, Z};

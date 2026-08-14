@@ -12,20 +12,24 @@ use std::sync::Arc;
 
 use umt::algebra::QuotientGroup;
 use umt::algebra::lattice::Sublattice;
-use umt::error::{ComplexityError, TemperamentError};
+use umt::context::TheoryContext;
+use umt::error::{ComplexityError, PitchError, TemperamentError};
 use umt::pitch::{
-    Cents, FrequencyHz, LogFrequency, Octaves, PitchOrigin, PitchPoint, PitchRealization,
-    PitchRealizer, RegularTuning,
+    AdmissibleFamily, Cents, Chord, ChordDistance, CostQuestion, Deviation, FrequencyHz,
+    Interpolation, LogFrequency, LogPitchDistance, MassProfile, MetricClaim, Octaves, PitchOrigin,
+    PitchPoint, PitchRealization, PitchRealizer, PitchTrajectory, PitchTrajectoryRef,
+    RegularTuning, SpanCostModel, SpanPenalties, TransportProfile, VoiceId,
 };
 use umt::proportion::{
     Complexity, ComplexityProfile, LogWeightedL1, PositiveFinite, RealValuation, WeightedL1,
 };
-use umt::realization::optimization::OptimizationOutcome;
+use umt::realization::optimization::{ApproximationGuarantee, OptimizationOutcome};
 use umt::temperament::{
     AmbientLattice, EquivalenceDomain, HomomorphicSplit, KernelLattice, LinearSplit, OffsetPolicy,
     RepresentativePolicy, SaturationPolicy, SplitPolicy, StructuralLens, TemperamentMap,
     UnitEquivalence,
 };
+use umt::time::{ClockTime, Seconds, TimeSpan};
 use umt::{Basis, IntMatrix, PatentVal, RoundingConvention, Z};
 
 const NEAREST: RoundingConvention = RoundingConvention::NearestHalfAwayFromZero;
@@ -751,6 +755,214 @@ fn f31_regular_tuning_requires_a_point_reference() {
         realization.tuning(),
         "the interval tuning is untouched"
     );
+}
+
+/// F8 - unequal voice count.
+///
+/// Compare a one-voice unison state with a two-voice doubled unison state.
+/// UMT-3.2 section 4.4.4 requires two things of a conforming implementation:
+/// equal-mass probability normalization must be *rejected* for a
+/// multiplicity-sensitive metric unless it is explicitly selected, and an
+/// unbalanced or edit profile must report the configured birth cost.
+#[test]
+fn f08_unequal_voice_count() {
+    let steps = AmbientLattice::new("umt:edo:12", 1);
+    let tuning = RegularTuning::equal_divisions(&steps, 12).unwrap();
+    let ground = LogPitchDistance::new(tuning);
+    let middle_c = PitchPoint::new(PitchOrigin::new("umt:origin:c4"), steps.zero());
+
+    let single = Chord::from_voices([(VoiceId::new("soprano"), middle_c.clone())]).unwrap();
+    let doubled = Chord::from_voices([
+        (VoiceId::new("soprano"), middle_c.clone()),
+        (VoiceId::new("alto"), middle_c.clone()),
+    ])
+    .unwrap();
+
+    // The two states are distinguishable to begin with, and stay so.
+    assert_ne!(single, doubled);
+    assert_eq!(single.forget_voice_labels().total_len(), 1);
+    assert_eq!(doubled.forget_voice_labels().total_len(), 2);
+    assert_eq!(doubled.forget_voice_labels().multiplicity(&middle_c), 2);
+    assert!(doubled.has_doubling());
+
+    // 1. The multiplicity-sensitive profile refuses the comparison rather
+    //    than renormalizing behind the caller's back.
+    let sensitive = ChordDistance::new(
+        ground.clone(),
+        2.0,
+        TransportProfile::Balanced {
+            mass: MassProfile::PerVoice,
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        sensitive.distance(&single, &doubled),
+        Err(PitchError::UnequalMass { left: 1, right: 2 }),
+        "classical balanced W_p does not solve the unequal-mass case"
+    );
+
+    // 2. Normalization is available, but only by naming it - and then the
+    //    documented loss is real: the two states become one measure.
+    let normalized = ChordDistance::new(
+        ground.clone(),
+        2.0,
+        TransportProfile::Balanced {
+            mass: MassProfile::NormalizedProbability,
+        },
+    )
+    .unwrap();
+    assert_eq!(normalized.distance(&single, &doubled).unwrap(), 0.0);
+    assert_ne!(
+        single, doubled,
+        "the chords remain distinguishable even where this distance cannot tell them apart"
+    );
+
+    // 3. The edit profile handles the unequal case *without* that loss, and
+    //    reports exactly the configured birth cost.
+    let boundary = 0.75;
+    let edit =
+        ChordDistance::new(ground.clone(), 1.0, TransportProfile::Edit { boundary }).unwrap();
+    assert!((edit.distance(&single, &doubled).unwrap() - boundary).abs() < 1e-12);
+    assert!((edit.distance(&doubled, &single).unwrap() - boundary).abs() < 1e-12);
+    assert!(matches!(edit.metric_claim(), MetricClaim::Metric { .. }));
+
+    // The same answer from the span side, where the birth is a named event
+    // rather than an anonymous unit of cost.
+    let model = SpanCostModel::new(
+        ground,
+        1.0,
+        SpanPenalties {
+            split: 0.0,
+            merge: 0.0,
+            birth: boundary,
+            death: 2.0,
+        },
+    )
+    .unwrap();
+    let outcome = model.minimum_over_assignments(&single, &doubled).unwrap();
+    assert!(outcome.is_optimal());
+    let cost = outcome.cost().unwrap();
+    assert_eq!(
+        cost.question(),
+        &CostQuestion::MinimumOverFamily(AdmissibleFamily::PartialAssignment),
+        "section 4.4.5: the output states which question it answers"
+    );
+    assert_eq!(cost.shape().entries, 1, "one voice is born");
+    assert_eq!(cost.shape().exits, 0);
+    assert_eq!(cost.birth(), boundary);
+    assert_eq!(cost.movement(), 0.0, "the continuing voice does not move");
+    assert!((cost.total() - boundary).abs() < 1e-12);
+}
+
+/// F20 - continuous pitch.
+///
+/// A vibrato and a continuous glissando. UMT-3.2 section 4.7 requires that the
+/// trajectory survive a native round trip and that a device export record any
+/// sampling or quantization approximation.
+#[test]
+fn f20_continuous_pitch() {
+    let steps = AmbientLattice::new("umt:edo:12", 1);
+    let context = TheoryContext::builder().ambient(&steps).unwrap().build();
+    let origin = PitchOrigin::new("umt:origin:a4");
+    let reference = PitchPoint::new(origin.clone(), steps.zero());
+    let realizer = PitchRealization::new(
+        RegularTuning::equal_divisions(&steps, 12).unwrap(),
+        reference.clone(),
+        FrequencyHz::new(440.0).unwrap().log_frequency(),
+    );
+
+    let second = TimeSpan::from_duration(ClockTime::ZERO, Seconds::new(1.0).unwrap()).unwrap();
+
+    // A vibrato of 40 cents at 6 Hz around a nominal A4.
+    let vibrato = PitchTrajectory::new(
+        reference.clone(),
+        second,
+        Deviation::vibrato(
+            Octaves::from(Cents::new(40.0).unwrap()),
+            FrequencyHz::new(6.0).unwrap(),
+        )
+        .unwrap(),
+    );
+
+    // A glissando of a perfect fourth over the same span.
+    let glissando = PitchTrajectory::new(
+        reference.clone(),
+        second,
+        Deviation::Linear {
+            from: Octaves::ZERO,
+            to: Octaves::from(Cents::new(500.0).unwrap()),
+        },
+    );
+
+    // The nominal pitch is structural and shared; the two are different
+    // trajectories all the same.
+    assert_eq!(vibrato.nominal(), glissando.nominal());
+    assert_ne!(vibrato.deviation(), glissando.deviation());
+
+    // The glissando arrives where it said it would, and passes the midpoint
+    // halfway through.
+    let at = |seconds: f64| ClockTime::new(seconds).unwrap();
+    let start = glissando.evaluate(&realizer, &(), at(0.0)).unwrap();
+    let end = glissando.evaluate(&realizer, &(), at(1.0)).unwrap();
+    assert!((Cents::from(start.interval_to(end)).get() - 500.0).abs() < 1e-9);
+    let middle = glissando.evaluate(&realizer, &(), at(0.5)).unwrap();
+    assert!((Cents::from(start.interval_to(middle)).get() - 250.0).abs() < 1e-9);
+
+    // The vibrato returns to its nominal pitch every half cycle and never
+    // leaves the declared depth.
+    assert_eq!(
+        vibrato.evaluate(&realizer, &(), at(0.0)).unwrap(),
+        realizer.realize_point(&reference).unwrap()
+    );
+    for index in 0..=1000 {
+        let deviation = vibrato
+            .deviation()
+            .evaluate(second, at(f64::from(index) / 1000.0))
+            .unwrap();
+        assert!(Cents::from(deviation).get().abs() <= 40.0 + 1e-9);
+    }
+
+    // Obligation 1: the trajectory survives a native round trip, exactly.
+    for trajectory in [&vibrato, &glissando] {
+        let wire = trajectory.to_ref();
+        assert_eq!(&wire.resolve_ambient(&context).unwrap(), trajectory);
+
+        let text = serde_json::to_string(&wire).unwrap();
+        let parsed: PitchTrajectoryRef = serde_json::from_str(&text).unwrap();
+        assert_eq!(&parsed.resolve_ambient(&context).unwrap(), trajectory);
+    }
+
+    // Obligation 2: a device export records the approximation it introduced,
+    // and the record is a bound that actually holds.
+    for trajectory in [&vibrato, &glissando] {
+        let sampled = trajectory
+            .sample_in_fixed_context(
+                &realizer,
+                &(),
+                FrequencyHz::new(128.0).unwrap(),
+                Interpolation::Linear,
+            )
+            .unwrap();
+
+        let record = sampled.record();
+        assert_eq!(record.interpolation, Interpolation::Linear);
+        assert!(record.step.get() <= 1.0 / 128.0 + 1e-15);
+        let ApproximationGuarantee::AbsoluteGap { epsilon } = record.guarantee else {
+            panic!("both deviations have a Lipschitz bound, so the gap is quantified");
+        };
+
+        for index in 0..=997 {
+            let when = at(f64::from(index) / 997.0);
+            let exact = trajectory.evaluate(&realizer, &(), when).unwrap();
+            let rebuilt = sampled.reconstruct(when).unwrap();
+            let error = exact.interval_to(rebuilt).get().abs();
+            assert!(
+                error <= epsilon.get() + 1e-15,
+                "declared {} octaves, observed {error}",
+                epsilon.get()
+            );
+        }
+    }
 }
 
 /// Prompt section 13: mandatory equal-division cases.

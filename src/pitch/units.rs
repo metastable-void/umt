@@ -11,150 +11,38 @@
 //! to `0.0`.
 
 use crate::error::PitchError;
+use crate::quantity::{finite_newtype, interval_arithmetic};
 
 /// Cents per octave.
 pub const CENTS_PER_OCTAVE: f64 = 1200.0;
 
-macro_rules! finite_newtype {
-    ($name:ident, $doc:expr) => {
-        #[doc = $doc]
-        #[derive(Debug, Clone, Copy)]
-        #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-        #[cfg_attr(feature = "serde", serde(into = "f64", try_from = "f64"))]
-        pub struct $name(f64);
-
-        impl $name {
-            /// Accepts a finite value.
-            ///
-            /// # Errors
-            ///
-            /// Returns [`PitchError::NonFiniteQuantity`] for infinities and
-            /// NaN.
-            pub fn new(value: f64) -> Result<Self, PitchError> {
-                if value.is_finite() {
-                    Ok(Self(if value == 0.0 { 0.0 } else { value }))
-                } else {
-                    Err(PitchError::NonFiniteQuantity)
-                }
-            }
-
-            /// The underlying value.
-            #[must_use]
-            pub fn get(self) -> f64 {
-                self.0
-            }
-        }
-
-        impl PartialEq for $name {
-            fn eq(&self, other: &Self) -> bool {
-                self.0.to_bits() == other.0.to_bits()
-            }
-        }
-
-        impl Eq for $name {}
-
-        impl PartialOrd for $name {
-            fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
-                Some(self.cmp(other))
-            }
-        }
-
-        impl Ord for $name {
-            fn cmp(&self, other: &Self) -> core::cmp::Ordering {
-                self.0
-                    .partial_cmp(&other.0)
-                    .expect("invariant: the value is finite")
-            }
-        }
-
-        impl core::hash::Hash for $name {
-            fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
-                self.0.to_bits().hash(state);
-            }
-        }
-
-        impl From<$name> for f64 {
-            fn from(value: $name) -> Self {
-                value.0
-            }
-        }
-
-        impl TryFrom<f64> for $name {
-            type Error = PitchError;
-
-            fn try_from(value: f64) -> Result<Self, Self::Error> {
-                Self::new(value)
-            }
-        }
-    };
-}
-
-macro_rules! interval_arithmetic {
-    ($name:ident) => {
-        impl $name {
-            /// Zero: the unison.
-            pub const ZERO: Self = Self(0.0);
-
-            /// Scales an interval by a real factor.
-            ///
-            /// # Errors
-            ///
-            /// Returns [`PitchError::NonFiniteQuantity`] if the factor or the
-            /// result is not finite.
-            pub fn scale(self, factor: f64) -> Result<Self, PitchError> {
-                Self::new(self.0 * factor)
-            }
-
-            /// The magnitude, discarding direction.
-            #[must_use]
-            pub fn abs(self) -> Self {
-                Self(self.0.abs())
-            }
-        }
-
-        impl core::ops::Neg for $name {
-            type Output = Self;
-
-            fn neg(self) -> Self {
-                Self(if self.0 == 0.0 { 0.0 } else { -self.0 })
-            }
-        }
-
-        // Intervals form a group, so they add. Points do not, which is why no
-        // such implementation exists for `LogFrequency`.
-        impl core::ops::Add for $name {
-            type Output = Self;
-
-            fn add(self, other: Self) -> Self {
-                Self(self.0 + other.0)
-            }
-        }
-
-        impl core::ops::Sub for $name {
-            type Output = Self;
-
-            fn sub(self, other: Self) -> Self {
-                Self(self.0 - other.0)
-            }
-        }
-    };
-}
-
 finite_newtype!(
     Octaves,
+    PitchError,
+    PitchError::NonFiniteQuantity,
     "An interval measured in octaves, that is, in `log2` of a frequency ratio.\n\nUMT layer: L3. This is an *interval*, not a pitch: it is the difference\nbetween two [`LogFrequency`] points, and intervals add while points do not."
 );
 finite_newtype!(
     Cents,
+    PitchError,
+    PitchError::NonFiniteQuantity,
     "An interval measured in cents, 1200 to the octave.\n\nUMT layer: L3. Conversion to and from [`Octaves`] is exact scaling by 1200,\nso it is lossless and available as `From`."
 );
 finite_newtype!(
     LogFrequency,
+    PitchError,
+    PitchError::NonFiniteQuantity,
     "A pitch position as `log2` of a frequency in hertz.\n\nUMT layer: L3. This is a *point*, not an interval. It has a canonical origin\nat 1 Hz, so unlike the structural pitch torsor it needs no declared origin,\nbut point plus point is still not an operation."
 );
+finite_newtype!(
+    Radians,
+    PitchError,
+    PitchError::NonFiniteQuantity,
+    "A phase angle in radians.\n\nUMT layer: L3. Used for the phase of a periodic pitch deviation such as\nvibrato (UMT-3.2 section 4.7); it is an angle, not a pitch quantity, and the\ntype says so."
+);
 
-interval_arithmetic!(Octaves);
-interval_arithmetic!(Cents);
+interval_arithmetic!(Octaves, PitchError);
+interval_arithmetic!(Cents, PitchError);
 
 impl From<Octaves> for Cents {
     fn from(value: Octaves) -> Self {

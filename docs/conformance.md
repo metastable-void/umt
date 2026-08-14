@@ -23,7 +23,7 @@ Status values:
 | F5 | Height with a generator below 1 | pass | `tests/conformance.rs::f05_height_with_a_generator_below_one` |
 | F6 | Nonhomomorphic representative policy | pass | `tests/conformance.rs::f06_nonhomomorphic_representative_policy` |
 | F7 | Enharmonic spelling | pass | `tests/conformance.rs::f07_enharmonic_spelling` |
-| F8 | Unequal voice count | pending | needs chords and voice leading |
+| F8 | Unequal voice count | pass | `tests/conformance.rs::f08_unequal_voice_count` |
 | F9 | Tie round trip | pending | needs the score layer |
 | F10 | 6/8 versus 3/4 | pending | needs meter |
 | F11 | Additive 2+2+3 | pending | needs rhythm trees |
@@ -35,7 +35,7 @@ Status values:
 | F17 | Ratio constraint is not a difference edge | pending | needs the temporal solver |
 | F18 | External temporal predicate | pending | needs temporal constraints |
 | F19 | Inharmonic empirical scale | pending | needs the L3 scale object |
-| F20 | Continuous pitch trajectory | pending | needs trajectories |
+| F20 | Continuous pitch trajectory | pass | `tests/conformance.rs::f20_continuous_pitch` |
 | F21 | Scala mixed exact and metric entries | pending | needs the `.scl` adapter |
 | F22 | Reachable versus ambient octave classes | pass | `tests/conformance.rs::f22_reachable_versus_ambient_classes` |
 | F23 | Unmeasured event without fixed onset | pending | needs the score layer |
@@ -52,10 +52,16 @@ Status values:
 | F34 | Group length versus lattice norm | pass | `tests/conformance.rs::f34_group_length_versus_lattice_norm` |
 | F35 | Three-note quarter-comma-meantone MOS | pending | needs generated sets |
 
-Thirteen of the thirty-five fixtures pass; none is partial. Every remaining one
-depends on a layer that does not exist yet - chords and voice leading,
-trajectories, time, score, device, the native container, or an external
-adapter.
+Fifteen of the thirty-five fixtures pass; none is partial. Every remaining one
+depends on a layer that does not exist yet - time, score, device, the native
+container, an external adapter, or generated sets.
+
+F20's two obligations are both discharged, and are worth naming because they
+are easy to claim loosely. The trajectory survives a native round trip through
+`PitchTrajectoryRef`, exactly - not to within a tolerance. And the device
+export records an approximation whose bound is *derived* from the deviation's
+Lipschitz constant, then checked against the reconstruction at a thousand
+intermediate times rather than asserted.
 
 ## Law coverage
 
@@ -81,6 +87,11 @@ UMT-3.2 section 9.1 and prompt section 47 laws currently exercised, in
 | Section 9.4 point-space laws | `point_space_laws`, `realized_point_space_laws` |
 | Law T1 regular tuning homomorphism | `t1_regular_tuning_is_a_homomorphism` |
 | Law T2 comma error | `t2_comma_error_is_minus_the_just_size` |
+| Section 4.3 chord views and voice sets | `chord_views_lose_exactly_what_they_say_they_lose`, `voice_sets_form_a_partial_commutative_monoid` |
+| Section 4.4.1 span composition by pullback | `voice_leading_composition_is_associative` |
+| Section 4.4.2 declared-span cost | `declared_span_cost_is_the_sum_of_its_terms` |
+| Section 4.4.5 declared versus minimum | `the_family_minimum_is_no_worse_than_any_member` |
+| Section 9.5 voice-leading metric laws | `the_edit_profile_obeys_the_metric_laws`, plus the unit tests in `src/pitch/voice_leading.rs` |
 
 P8 to P11 run against four mapping shapes - surjective, non-surjective, the
 zero map, and rank 2 - so the degenerate cases are covered rather than assumed
@@ -96,9 +107,26 @@ Law T3 - that a context-dependent realization is not advertised as a regular
 homomorphism - is structural here: `PitchRealizer::is_regular` defaults to
 `false`, and fixture F28 checks both answers.
 
-The voice-leading, notation, rhythm-tree, quantization, tempo-map, and
-temporal-constraint laws are not yet applicable: the structures they constrain
-do not exist.
+Section 9.5 deserves a note, since it is the one law group that constrains what
+an implementation is allowed to *say* rather than what it must compute.
+`ChordDistance::metric_claim` returns a value naming the state space each
+profile claims its laws on, and the claims are tested there rather than
+inherited:
+
+- balanced per-voice transport is a metric on multisets of one fixed
+  cardinality, and only a *pseudometric* on labelled chords, since relabelling
+  a chord does not move it - the claim says so, and a unit test demonstrates a
+  relabelled pair at distance zero;
+- the assignment/edit profile is a metric across cardinalities under the
+  truncated ground cost, tested over three of them;
+- a zero boundary cost withdraws the claim entirely, and the test shows the
+  failure it would otherwise hide.
+
+The declared-span cost of section 4.4.2 is never called a chord metric, which
+section 9.5 forbids without proof.
+
+The notation, rhythm-tree, quantization, tempo-map, and temporal-constraint
+laws are not yet applicable: the structures they constrain do not exist.
 
 ## Examples
 
@@ -117,3 +145,13 @@ at this stage:
 Example 1 stops short of the regular tuning its prompt text mentions, because
 tuning is an L3 map and belongs to a later stage; everything else in it is
 exact.
+
+One supplementary example beyond the prompt's list:
+
+| Example | Subject | File |
+|---|---|---|
+| - | Voice leading: declared cost, family minimum, unequal counts | `examples/voice_leading.rs` |
+
+It takes a voice exchange, where the declared leading moves two voices by a
+fifth each and the minimum over relabellings is zero. Both numbers are
+correct, and section 4.4.5 is about never confusing them.

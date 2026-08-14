@@ -10,9 +10,9 @@ convenience.
 |---|---|---|
 | L0 notation | spelled symbols, ties, tuplet brackets | not implemented |
 | L1 exact structure | monzos, exact ratios, rational durations | `algebra`, `proportion` |
-| L2 structural quotient | tempered classes, image lattices, meter | `temperament` |
-| L3 metric realization | log-frequency, tuning curves, tempo maps | `*_f64` accessors; `realization` (identifier only) |
-| L4 device realization | ticks, MIDI, control words | not implemented |
+| L2 structural quotient | tempered classes, image lattices, meter | `temperament`, `pitch::{chord, voice_leading}` |
+| L3 metric realization | log-frequency, tuning curves, tempo maps | `pitch::{units, tuning, trajectory}`, `time`, `realization` |
+| L4 device realization | ticks, MIDI, control words | `pitch::trajectory::SampledTrajectory` only |
 
 ## Present modules
 
@@ -21,6 +21,7 @@ src/
   lib.rs                  crate root, no_std attribute, re-exports
   error.rs                typed error enums
   context.rs              TheoryContext, wire-form references
+  quantity.rs             validated real-quantity newtype macros (private)
   algebra/
     quotient.rs           QuotientGroup: Z^n / L by structure theorem
     integer.rs            Z, exact round(n log2 p/q), L3 log helpers
@@ -35,9 +36,15 @@ src/
     valuation.rs          PositiveQ, PositiveFinite, RealValuation
     complexity.rs         declared complexity profiles, weighted l1, Tenney
   pitch/
-    units.rs              FrequencyHz, LogFrequency, Octaves, Cents
-    point.rs              PitchOrigin, PitchPoint torsor over any interval type
+    units.rs              FrequencyHz, LogFrequency, Octaves, Cents, Radians
+    point.rs              PitchOrigin, PitchPoint torsor, PitchPointRef
     tuning.rs             RegularTuning, PitchRealization, PitchRealizer
+    chord.rs              VoiceId, VoiceSet, Chord, PitchMultiset, annotations
+    voice_leading.rs      VoiceLeading span, span cost, chord distance profiles
+    trajectory.rs         Deviation, PitchTrajectory, sampling and its record
+  time/
+    units.rs              ClockTime, Seconds - the physical timeline only
+    span.rs               TimeSpan, the closed domain [t0, t1]
   temperament/
     map.rs                RawTemperamentMap, TemperamentMap, exact preimages
     image.rs              LatticeId, AmbientLattice/Elem, ImageLattice/Elem
@@ -65,16 +72,21 @@ the general machinery that are meaningful only because the ambient rank is 1;
 
 Following the staging of the implementation prompt, in order:
 
-1. The rest of `pitch/`: trajectories (section 4.7, F20), chords with voice
-   identity (4.3), and voice leading as a span with declared costs (4.4, F8).
-2. `time/` - exact durations, rhythm trees, meter and grouping, tempo maps,
-   quantizers, temporal constraint networks. The largest single stage, and the
-   one that closes the most fixtures: F10 to F18, F25, F27, F32.
-3. `score/` - scoped events, temporal placement, ties, event relations (F9,
+1. The rest of `time/` - exact rational durations and beat time, rhythm trees,
+   meter and grouping, tempo maps, quantizers, temporal constraint networks.
+   The largest single stage, and the one that closes the most fixtures: F10 to
+   F18, F25, F27, F32. The physical half of the timeline is already here; what
+   arrives is the *exact* half and the maps between them.
+2. `score/` - scoped events, temporal placement, ties, event relations (F9,
    F23, F24).
-4. The rest of `realization/` - residual taxonomy, realization records, the
+3. The rest of `realization/` - residual taxonomy, realization records, the
    compiled performance-plan boundary.
-5. The native container in `io/` (F29), then external adapters (F19, F21).
+4. The native container in `io/` (F29), then external adapters (F19, F21),
+   which also bring the empirical L3 scale of section 4.9.
+5. Generated structures (part III, F35), which are independent of the rest.
+
+Deliberately deferred: pitch notation at L0 (section 4.5), because prompt
+section 55 says not to overbuild notation in v1.
 
 ## Why the normal forms are what they are
 
@@ -106,6 +118,39 @@ The registry that maps a serialized `BasisId` back to a shared handle is the
 `TheoryContext` of prompt section 8; it arrives with the general temperament
 map, and until then serialization is limited to self-contained definition
 objects.
+
+## Why voice leading is four types instead of one function
+
+`chord_distance(a, b) -> f64` would be the obvious API and it would be wrong,
+because UMT-3.2 section 4.4.5 says the plausible readings of that call answer
+different questions. So the module has four objects instead:
+
+- `VoiceLeading` is the declared relation, a span, with no costs attached. It
+  is the only one of the four that is exact and metric-free.
+- `SpanCostModel::declared_cost` prices *that* relation, additively, in the
+  five terms section 4.4.2 names.
+- `SpanCostModel::minimum_over_assignments` minimizes over a stated family, and
+  the `SpanCost` it returns carries `CostQuestion::MinimumOverFamily` so the
+  number cannot be mistaken for the previous one.
+- `ChordDistance` is the only one permitted to claim distance laws, and
+  `metric_claim` names the state space each profile claims them on.
+
+The fourth is where the crate is most careful. Balanced per-voice transport is
+a metric on multisets, but only a *pseudometric* on labelled chords - a voice
+exchange leaves it at zero. Saying "metric" without saying "on what" is the
+error section 9.5 exists to prevent, so the claim is a value with a
+`state_space` field rather than a sentence in a doc comment.
+
+## Why `time/` exists before the rhythm layer
+
+Section 4.7 defines a pitch trajectory on `[t0, t1]`, so it needs a domain.
+What is there now is only the *physical* timeline: `ClockTime`, `Seconds`,
+`TimeSpan`, all real-valued and all L3.
+
+Structural beat time is a separate exact type that arrives with the rhythm
+layer, not a constructor of these. Section 5.8.3 is explicit that a tempo map
+is not the same kind of object as a pitch tuning; a single shared timeline type
+would erase exactly the distinction the tempo map exists to express.
 
 ## Checks
 

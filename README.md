@@ -7,22 +7,23 @@ choice made explicit.
 
 ## Status
 
-Early, but the exact structural core is complete and the metric layer has
-started. Implemented: the proportion lattice; exact integer matrices with
-Smith and canonical Hermite normal forms; free lattices and quotients; regular
-temperament mappings with their image and kernel lattices; comma-subgroup
-saturation validation; equal divisions; homomorphic splittings; representative
-policies including a provably bounded minimum-complexity search; the
-structural quotient lens; unit equivalence; declared complexity profiles;
-first-class optimization outcomes; pitch units, point torsors, regular tuning,
-and contextual realization; and an immutable theory context with
-reference-based serialization.
+Early, but the exact structural core is complete and the pitch layer is done
+apart from L0 notation. Implemented: the proportion lattice; exact integer
+matrices with Smith and canonical Hermite normal forms; free lattices and
+quotients; regular temperament mappings with their image and kernel lattices;
+comma-subgroup saturation validation; equal divisions; homomorphic splittings;
+representative policies including a provably bounded minimum-complexity
+search; the structural quotient lens; unit equivalence; declared complexity
+profiles; first-class optimization outcomes; pitch units, point torsors,
+regular tuning, and contextual realization; chords with voice identity; voice
+leading as a span with declared costs and honestly-scoped distance claims;
+continuous pitch trajectories with derived sampling bounds; and an immutable
+theory context with reference-based serialization.
 
-**Thirteen of the thirty-five UMT-3.2 fixtures pass**, and every remaining one
-depends on a layer that is not built yet: chords and voice leading,
-trajectories, time, score, device, or the native container. See
-`docs/architecture.md` for the staging plan and `docs/conformance.md` for the
-fixture matrix.
+**Fifteen of the thirty-five UMT-3.2 fixtures pass**, and every remaining one
+depends on a layer that is not built yet: time, score, device, the native
+container, external adapters, or generated sets. See `docs/architecture.md`
+for the staging plan and `docs/conformance.md` for the fixture matrix.
 
 This crate does not yet claim UMT-3.2 conformance. Conformance is claimed only
 when the applicable mandatory fixture suite passes.
@@ -112,6 +113,43 @@ let realization =
 
 let e5 = realization.realize_point(&reference.translate(&fifth)?)?;
 assert!((e5.frequency()?.get() - 659.2551138).abs() < 1e-6);
+# Ok::<(), Box<dyn core::error::Error>>(())
+```
+
+A chord is a function from voice identities to points, so a doubling is a
+multiplicity rather than a duplicate. Classical balanced transport cannot
+compare two chords of different sizes, and rather than renormalizing behind
+your back, it says so (fixture F8):
+
+```rust
+use umt::pitch::{
+    Chord, ChordDistance, LogPitchDistance, MassProfile, PitchOrigin, PitchPoint, RegularTuning,
+    TransportProfile, VoiceId,
+};
+use umt::temperament::AmbientLattice;
+
+let steps = AmbientLattice::new("umt:edo:12", 1);
+let middle_c = PitchPoint::new(PitchOrigin::new("umt:origin:c4"), steps.zero());
+
+let single = Chord::from_voices([(VoiceId::new("soprano"), middle_c.clone())])?;
+let doubled = Chord::from_voices([
+    (VoiceId::new("soprano"), middle_c.clone()),
+    (VoiceId::new("alto"), middle_c.clone()),
+])?;
+assert_eq!(doubled.forget_voice_labels().multiplicity(&middle_c), 2);
+
+let ground = LogPitchDistance::new(RegularTuning::equal_divisions(&steps, 12)?);
+let balanced = ChordDistance::new(
+    ground.clone(),
+    2.0,
+    TransportProfile::Balanced { mass: MassProfile::PerVoice },
+)?;
+assert!(balanced.distance(&single, &doubled).is_err());
+
+// An edit profile handles the unequal case without discarding multiplicity,
+// and charges exactly the birth cost it was configured with.
+let edit = ChordDistance::new(ground, 1.0, TransportProfile::Edit { boundary: 0.75 })?;
+assert!((edit.distance(&single, &doubled)? - 0.75).abs() < 1e-12);
 # Ok::<(), Box<dyn core::error::Error>>(())
 ```
 

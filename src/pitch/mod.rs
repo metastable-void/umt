@@ -12,16 +12,42 @@
 //!   that are not interchangeable: [`RegularTuning`] with reference data, and
 //!   the contextual [`PitchRealizer`].
 //!
-//! Still to come in this layer: pitch trajectories (section 4.7), chords and
-//! voice identity (4.3), and voice leading (4.4).
+//! Above those sit the objects music is actually written in. A [`Chord`] is a
+//! function from voice identities to points, so unisons and doublings survive.
+//! A [`VoiceLeading`] is a span rather than a permutation, so splits, merges,
+//! entries, and exits are representable. A [`PitchTrajectory`] is
+//! `Phi(x, c(t)) + v(t)`, so a bend around a nominal pitch never gets confused
+//! with a different nominal pitch.
+//!
+//! Not yet built: pitch notation at L0 (section 4.5, deliberately deferred by
+//! prompt section 55) and empirical inharmonic scales (section 4.9, which
+//! belongs with the external adapters).
 
+pub mod chord;
 pub mod point;
+pub mod trajectory;
 pub mod tuning;
 pub mod units;
+pub mod voice_leading;
 
 #[doc(inline)]
-pub use crate::pitch::point::{IntervalGroupElement, PitchOrigin, PitchPoint};
+pub use crate::pitch::chord::{Chord, ChordAnnotation, PitchMultiset, VoiceId, VoiceSet};
+#[doc(inline)]
+pub use crate::pitch::point::{IntervalGroupElement, PitchOrigin, PitchPoint, PitchPointRef};
+#[doc(inline)]
+pub use crate::pitch::trajectory::{
+    Deviation, Interpolation, PitchTrajectory, PitchTrajectoryRef, SampledTrajectory,
+    SamplingRecord, TrajectorySample,
+};
 #[doc(inline)]
 pub use crate::pitch::tuning::{L2IntervalGroup, PitchRealization, PitchRealizer, RegularTuning};
 #[doc(inline)]
-pub use crate::pitch::units::{CENTS_PER_OCTAVE, Cents, FrequencyHz, LogFrequency, Octaves};
+pub use crate::pitch::units::{
+    CENTS_PER_OCTAVE, Cents, FrequencyHz, LogFrequency, Octaves, Radians,
+};
+#[doc(inline)]
+pub use crate::pitch::voice_leading::{
+    AdmissibleFamily, ChordDistance, CostQuestion, Edge, GroundCost, LogPitchDistance, MassProfile,
+    MetricClaim, SearchOptions, SpanCost, SpanCostModel, SpanPenalties, SpanShape,
+    TransportProfile, VoiceLeading,
+};
