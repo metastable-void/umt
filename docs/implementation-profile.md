@@ -404,16 +404,73 @@ context `Phi(x, c)` is constant, so the deviation's constant bounds the whole
 trajectory. A varying context has to be sampled through `evaluate_with`, and
 the caller states their own guarantee.
 
-## D28. Physical time arrives before structural time
+## D28. The two timelines are unrelated types **binding**
 
-`src/time/` currently holds only `ClockTime`, `Seconds`, and `TimeSpan`,
-because section 4.7 needs a trajectory domain and the rhythm layer is not
-built. Structural beat time will be a *different* exact type, not a
-constructor of these: section 5.8.3 is explicit that a tempo map is not the
-same kind of object as a pitch tuning, and one shared timeline type would
-erase the distinction the map exists to express.
+`ClockTime` and `Seconds` are measured reals; `BeatTime`, `Beats`, and
+`BeatDuration` are exact rationals. There is no `From` in either direction and
+no arithmetic between them. The only crossing is a `TempoMap`.
 
-## D29. `divisions = 0` is a legal mapping
+Section 5.1 requires the distinction and section 5.8.3 explains why it matters:
+a tempo map is a monotone map between affine ordered timelines, not a group
+homomorphism on intervals, and a single shared timeline type would erase
+exactly what the map exists to express. The practical payoff is smaller and
+more immediate - a quintuplet inside a triplet lands on `1/15` of a beat, which
+closes exactly as a rational and does not as a `f64`.
+
+## D29. The declared beat unit is the quarter note **binding**
+
+Section 5.1 puts the structural timeline over `D_b = Q` "in declared beat
+units" and requires a different group to be declared. This crate declares
+`D_b = Q` (`BEAT_DURATION_GROUP`) with the quarter note as the unit
+(`BEAT_UNIT`).
+
+The unit is not arbitrary. PPQN device grids are already expressed in pulses
+per quarter note, so with this choice a `TickGrid` of `P` and the grid `G_P` of
+section 5.7 are the same object, and fixtures F12 and F13 read directly as
+written.
+
+## D30. Three temporal solver profiles, separated by type
+
+`StpProblem` accepts `DifferenceConstraint` and nothing else; `RatioConstraint`
+cross-multiplies into `LinearConstraint`, for which `StpProblem` has no method.
+So fixture F17's obligation - that a ratio constraint is not silently passed to
+a shortest-path solver - is discharged by the absence of an API rather than by
+a runtime check.
+
+The linear profile uses exact Fourier-Motzkin elimination over the rationals
+rather than a floating-point simplex. Two reasons, both load-bearing:
+
+- Strict inequalities propagate through the arithmetic natively, so section
+  5.10.2's positive-denominator condition can be *kept* strict. A solver that
+  could not express it would have forced the invented `delta` the specification
+  forbids (fixture F25).
+- The answer is exact, so a feasibility verdict is a proof rather than a
+  numerical opinion.
+
+The cost is that elimination can blow up combinatorially. It is budgeted, and
+exhaustion is reported as `EliminationBudgetExceeded` rather than answered.
+
+## D31. A justified delta carries its justification in the type
+
+`PositivityHandling::JustifiedDelta` has a mandatory `justification: String`
+beside its `delta`. Section 5.10.2 permits the substitution only "when a
+positive lower bound `delta` is justified by the model or source data", so a
+`delta` with no stated justification is exactly what the specification forbids
+- and it is not a value this crate can construct.
+
+## D32. Endpoint-preserving allocation rounds boundaries, not durations
+
+Section 5.7.5 describes the outcome and leaves the method open.
+`allocate_preserving_endpoint` rounds the *cumulative* boundaries and takes
+each child's span as the difference of consecutive boundaries, which makes
+`sum n_i = N` a theorem rather than a correction step. The final boundary is
+taken from the parent rather than recomputed, so the partition closes exactly
+whatever the weights.
+
+`allocate_locally` exists alongside it precisely so the failure mode of
+section 5.7.4 can be demonstrated rather than described.
+
+## D33. `divisions = 0` is a legal mapping
 
 The zero mapping has image `{0}`, which section 1.6 fixes through the
 convention `gcd(0, ..., 0) = 0`. In the general API its image has rank 0 and
@@ -421,7 +478,7 @@ an image element has an empty coordinate vector, which is the correct answer.
 Only the rank-one scalar convenience API of `PatentVal` has nothing to return,
 and it reports `TrivialImage` rather than pretending the answer is zero.
 
-## D30. Rank-0 bases are permitted
+## D34. Rank-0 bases are permitted
 
 A basis with no generators spans the trivial lattice. Nothing breaks, and
 rejecting it would be an invented restriction.

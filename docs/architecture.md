@@ -43,8 +43,15 @@ src/
     voice_leading.rs      VoiceLeading span, span cost, chord distance profiles
     trajectory.rs         Deviation, PitchTrajectory, sampling and its record
   time/
-    units.rs              ClockTime, Seconds - the physical timeline only
+    units.rs              ClockTime, Seconds - the physical timeline
     span.rs               TimeSpan, the closed domain [t0, t1]
+    beat.rs               BeatTime, Beats, BeatDuration, BeatSpan - all exact
+    rate.rs               SecondsPerBeat, BeatsPerSecond, OrientedRatio
+    rhythm.rs             RhythmTree, CyclicRhythm, exact flattening
+    meter.rs              TimeSignature, Meter, Grouping, MetricLayering
+    quantize.rs           TickGrid, Quantized, allocation and its evidence
+    tempo.rs              TempoMap in the homeomorphism profile
+    constraint.rs         STP, linear-ratio, and external-predicate profiles
   temperament/
     map.rs                RawTemperamentMap, TemperamentMap, exact preimages
     image.rs              LatticeId, AmbientLattice/Elem, ImageLattice/Elem
@@ -72,18 +79,14 @@ the general machinery that are meaningful only because the ambient rank is 1;
 
 Following the staging of the implementation prompt, in order:
 
-1. The rest of `time/` - exact rational durations and beat time, rhythm trees,
-   meter and grouping, tempo maps, quantizers, temporal constraint networks.
-   The largest single stage, and the one that closes the most fixtures: F10 to
-   F18, F25, F27, F32. The physical half of the timeline is already here; what
-   arrives is the *exact* half and the maps between them.
-2. `score/` - scoped events, temporal placement, ties, event relations (F9,
-   F23, F24).
-3. The rest of `realization/` - residual taxonomy, realization records, the
+1. `score/` - scoped events, temporal placement, ties, event relations (F9,
+   F23, F24). The event-indexed object of part VI, which is what turns the
+   pitch and time layers into a score rather than two marginal aggregates.
+2. The rest of `realization/` - residual taxonomy, realization records, the
    compiled performance-plan boundary.
-4. The native container in `io/` (F29), then external adapters (F19, F21),
+3. The native container in `io/` (F29), then external adapters (F19, F21),
    which also bring the empirical L3 scale of section 4.9.
-5. Generated structures (part III, F35), which are independent of the rest.
+4. Generated structures (part III, F35), which are independent of the rest.
 
 Deliberately deferred: pitch notation at L0 (section 4.5), because prompt
 section 55 says not to overbuild notation in v1.
@@ -141,16 +144,43 @@ exchange leaves it at zero. Saying "metric" without saying "on what" is the
 error section 9.5 exists to prevent, so the claim is a value with a
 `state_space` field rather than a sentence in a doc comment.
 
-## Why `time/` exists before the rhythm layer
+## Why there are two timelines
 
-Section 4.7 defines a pitch trajectory on `[t0, t1]`, so it needs a domain.
-What is there now is only the *physical* timeline: `ClockTime`, `Seconds`,
-`TimeSpan`, all real-valued and all L3.
+`ClockTime` and `Seconds` are measured reals. `BeatTime`, `Beats`, and
+`BeatDuration` are exact rationals. They are separate types with no
+`From` between them, and the only way across is a `TempoMap`.
 
-Structural beat time is a separate exact type that arrives with the rhythm
-layer, not a constructor of these. Section 5.8.3 is explicit that a tempo map
-is not the same kind of object as a pitch tuning; a single shared timeline type
-would erase exactly the distinction the tempo map exists to express.
+That is section 5.1 taken literally, and it pays for itself immediately.
+Nested tuplets land on rationals like `1/15` of a beat that no binary float
+represents, so an exact structural timeline is the difference between a
+quintuplet inside a triplet closing exactly and closing to within `1e-16`. And
+because the crossing is a named object rather than a numeric conversion,
+section 5.8.3's point - that a tempo map is not the same construction as a
+pitch tuning - is enforced rather than merely stated.
+
+## Three temporal solvers, because there are three problems
+
+Section 5.10 distinguishes solver profiles because not all temporal constraints
+reduce to shortest paths, and prompt section 31 forbids a universal solver that
+pretends otherwise. So:
+
+- `StpProblem` takes difference bounds and runs Floyd-Warshall. It is the only
+  profile with the unconditional consistency claim, and the only one that can
+  make it, because it is the only one whose constraints are difference bounds.
+- `LinearTemporalProblem` takes general linear inequalities and runs exact
+  Fourier-Motzkin elimination over the rationals. A three-variable ratio bound
+  cross-multiplies into this profile and cannot reach the previous one: the
+  types do not connect.
+- `HybridTemporalProblem` adds external predicates, which are typed data with a
+  declared contract and never executable code, and reports them as outstanding
+  rather than deciding them.
+
+Fourier-Motzkin was chosen over a simplex or an interior-point method for one
+reason: it carries strict inequalities through the arithmetic natively. That is
+what lets section 5.10.2's positivity condition stay strict instead of being
+replaced by an invented `delta`, which is fixture F25. The cost is
+combinatorial blow-up, so the elimination is budgeted and reports exhaustion
+rather than guessing.
 
 ## Checks
 

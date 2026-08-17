@@ -251,6 +251,131 @@ pub enum TimeError {
         /// End of the span.
         end: f64,
     },
+
+    /// A rate was not strictly positive.
+    ///
+    /// A tempo map is strictly increasing, so neither its derivative nor the
+    /// reciprocal beat rate can be zero or negative (UMT-3.2 section 5.8).
+    #[error("a tempo rate must be positive and finite, found {rate}")]
+    NonPositiveRate {
+        /// The rejected value.
+        rate: f64,
+    },
+
+    /// An exact ratio was zero or negative.
+    ///
+    /// Proportions act on positive quantities (UMT-3.2 section 2.1).
+    #[error("a proportion must be strictly positive")]
+    NonPositiveRatio,
+
+    /// A zero denominator was supplied for an exact structural value.
+    #[error("a rational structural value cannot have a zero denominator")]
+    ZeroDenominator,
+
+    /// A structural duration was zero or negative.
+    ///
+    /// A zero-duration note is not a short note. Section 5.8.4 requires a
+    /// zero-structural-duration delay to be represented explicitly, not as a
+    /// degenerate span.
+    #[error("a structural duration must be strictly positive")]
+    NonPositiveDuration,
+
+    /// A structural span was given endpoints in the wrong order.
+    #[error("structural span runs backwards")]
+    ReversedBeatSpan,
+
+    /// A rhythm-tree weight was not strictly positive
+    /// (UMT-3.2 section 5.3.1).
+    #[error("rhythm-tree child weights must be strictly positive")]
+    NonPositiveWeight,
+
+    /// An internal rhythm-tree node was given no children.
+    ///
+    /// A node with no children is a leaf; an empty division would be a node
+    /// that divides its span into nothing.
+    #[error("a rhythm-tree division must have at least one child")]
+    EmptyDivision,
+
+    /// A cyclic pattern was given a zero-length cycle.
+    #[error("a cyclic pattern must have at least one pulse")]
+    EmptyCycle,
+
+    /// A pulse index fell outside its cycle.
+    #[error("pulse index {index} is outside a cycle of {pulses} pulses")]
+    OnsetOutsideCycle {
+        /// The offending index.
+        index: u32,
+        /// The cycle length.
+        pulses: u32,
+    },
+
+    /// A metrical level was not contained in the finer level below it.
+    ///
+    /// Section 5.4.1 nests the levels as `L_2 subset L_1 subset L_0`. Levels
+    /// need not be *subgroups*, but they must nest.
+    #[error("metrical level {level} is not contained in the level below it")]
+    LevelNotNested {
+        /// Index of the offending level, counting the pulse lattice as zero.
+        level: usize,
+    },
+
+    /// A time signature was malformed.
+    #[error("`{numerator}/{denominator}` is not a usable time signature")]
+    InvalidTimeSignature {
+        /// The upper number.
+        numerator: u32,
+        /// The lower number.
+        denominator: u32,
+    },
+
+    /// A subgroup extended outside its parent group.
+    #[error("a subgroup must lie inside its parent span")]
+    GroupOutsideParent,
+
+    /// Two sibling groups overlapped.
+    #[error("sibling groups must not overlap")]
+    OverlappingGroups,
+
+    /// A structural position fell outside a declared span.
+    #[error("structural position is outside the declared span")]
+    OutsideBeatSpan,
+
+    /// A tempo map had too few breakpoints to span an interval.
+    #[error("a tempo map needs at least two breakpoints spanning a positive interval")]
+    DegenerateTempoMap,
+
+    /// A tempo map assigned two clock times to one structural position.
+    ///
+    /// Strictly increasing is not sufficient: the homeomorphism profile also
+    /// requires continuity and surjectivity onto an interval, and a jump has
+    /// neither (UMT-3.2 section 9.9, fixture F15). Section 5.8.4 lists the
+    /// sanctioned ways to represent a pause instead.
+    #[error("tempo map is discontinuous at beat {beat}")]
+    DiscontinuousTempoMap {
+        /// The structural position of the jump.
+        beat: String,
+    },
+
+    /// A tempo map failed to increase strictly on one of its timelines.
+    #[error("a tempo map must increase strictly on both timelines")]
+    NonMonotoneTempoMap,
+
+    /// A temporal variable was referenced but not declared.
+    #[error("temporal variable `{variable}` is not declared in this problem")]
+    UnknownTimeVariable {
+        /// The unresolved identifier.
+        variable: String,
+    },
+
+    /// An exhaustive elimination exceeded its declared budget.
+    ///
+    /// Reported rather than approximated: a feasibility answer that might be
+    /// wrong is worse than no answer.
+    #[error("linear elimination exceeded its budget of {budget} constraints")]
+    EliminationBudgetExceeded {
+        /// The budget that was exceeded.
+        budget: usize,
+    },
 }
 
 /// A pitch quantity, point, or realization was rejected.

@@ -19,7 +19,12 @@ use umt::temperament::{
     AmbientElem, AmbientLattice, HomomorphicSplit, KernelElem, LinearSplit, OffsetPolicy,
     RepresentativePolicy, SplitPolicy, StructuralLens, TemperamentMap,
 };
-use umt::{Basis, IntMatrix, PatentVal, RoundingConvention, Sublattice, Z};
+use umt::time::{
+    AllocationPolicy, BeatDuration, BeatSpan, BeatTime, Beats, ClockTime, DifferenceConstraint,
+    LinearConstraint, LinearTemporalProblem, OrientedRatio, RatioOrientation, RhythmTree,
+    StpProblem, TempoBreakpoint, TempoMap, TickGrid, TimeVarId,
+};
+use umt::{Basis, IntMatrix, PatentVal, Q, RoundingConvention, Sublattice, Z};
 
 fn five_limit() -> Arc<Basis> {
     Basis::primes("umt:prime:2.3.5", &[2, 3, 5]).expect("valid prime basis")
@@ -64,6 +69,15 @@ fn sorted_edges(span: &VoiceLeading) -> Vec<Edge> {
     let mut edges = span.edges().to_vec();
     edges.sort();
     edges
+}
+
+/// Ordered trees of positive integer weights, up to three levels deep.
+fn rhythm_trees() -> impl Strategy<Value = RhythmTree> {
+    let leaf = (1i64..=8).prop_map(|weight| RhythmTree::leaf(weight).expect("positive"));
+    leaf.prop_recursive(3, 24, 4, |inner| {
+        prop::collection::vec(inner, 1..=4)
+            .prop_map(|children| RhythmTree::division(children).expect("non-empty"))
+    })
 }
 
 fn seven_limit() -> Arc<Basis> {
@@ -731,6 +745,293 @@ proptest! {
         let direct = distance.distance(&x, &z).unwrap();
         let via = there + distance.distance(&y, &z).unwrap();
         prop_assert!(direct <= via + 1e-9 * scale, "{direct} > {via}");
+    }
+
+    /// UMT-3.2 section 9.7: flattened child spans exactly partition the parent
+    /// span, child order is preserved, and recursive flattening preserves the
+    /// root total.
+    #[test]
+    fn rhythm_tree_flattening_partitions_the_parent(
+        tree in rhythm_trees(),
+        beats in 1i64..=16,
+        denominator in 1i64..=7,
+    ) {
+        let span = BeatSpan::new(
+            BeatTime::zero(),
+            BeatTime::ratio(beats, denominator).unwrap(),
+        )
+        .unwrap();
+        let leaves = tree.flatten(&span).unwrap();
+
+        prop_assert_eq!(leaves.len(), tree.leaf_count());
+        prop_assert_eq!(leaves[0].span().start(), span.start());
+        prop_assert_eq!(leaves[leaves.len() - 1].span().end(), span.end());
+
+        // Each leaf begins exactly where the previous ended: a partition, not
+        // an approximation of one.
+        for pair in leaves.windows(2) {
+            prop_assert_eq!(pair[0].span().end(), pair[1].span().start());
+        }
+
+        // And the durations sum to the root total, exactly.
+        let total: Beats = leaves.iter().map(|leaf| leaf.span().duration()).sum();
+        prop_assert_eq!(total, span.duration());
+
+        // Child order is preserved: the leaf paths are lexicographically
+        // ascending.
+        for pair in leaves.windows(2) {
+            prop_assert!(pair[0].path() < pair[1].path());
+        }
+    }
+
+    /// UMT-3.2 section 9.8, floor and ceiling profiles: monotone, identity on
+    /// grid values, one-sided, with one-signed residuals.
+    #[test]
+    fn floor_and_ceiling_are_order_adjunctions(
+        numerator in -400i64..=400,
+        denominator in 1i64..=97,
+        ticks_per_beat in 1u32..=192,
+    ) {
+        let grid = TickGrid::new(ticks_per_beat).unwrap();
+        let at = BeatTime::ratio(numerator, denominator).unwrap();
+
+        let floor = grid.quantize(&at, RoundingConvention::Floor);
+        let ceiling = grid.quantize(&at, RoundingConvention::Ceiling);
+
+        // i(q_down(x)) <= x <= i(q_up(x)).
+        prop_assert!(grid.tick_time(&floor.value) <= at);
+        prop_assert!(at <= grid.tick_time(&ceiling.value));
+
+        // Residual signs under the convention e = x - i(q(x)).
+        prop_assert!(floor.residual.get() >= &Q::from(Z::from(0)));
+        prop_assert!(ceiling.residual.get() <= &Q::from(Z::from(0)));
+
+        // The bracket is at most one step wide.
+        prop_assert!(&ceiling.value - &floor.value <= Z::from(1));
+
+        // Identity on represented values.
+        let on_grid = grid.tick_time(&floor.value);
+        prop_assert_eq!(
+            grid.quantize(&on_grid, RoundingConvention::Floor).value,
+            floor.value.clone()
+        );
+        prop_assert_eq!(
+            grid.quantize(&on_grid, RoundingConvention::Ceiling).value,
+            floor.value.clone()
+        );
+
+        // Monotone: a later position never quantizes earlier.
+        let later = at.translate(&grid.tick_duration());
+        prop_assert!(grid.quantize(&later, RoundingConvention::Floor).value >= floor.value);
+        prop_assert!(grid.quantize(&later, RoundingConvention::Ceiling).value >= ceiling.value);
+    }
+
+    /// UMT-3.2 section 9.8, nearest profile: identity on grid values and a
+    /// residual bounded by half a step, with no universal one-sided
+    /// inequality.
+    #[test]
+    fn nearest_quantization_is_bounded_but_not_one_sided(
+        numerator in -400i64..=400,
+        denominator in 1i64..=97,
+        ticks_per_beat in 1u32..=192,
+    ) {
+        let grid = TickGrid::new(ticks_per_beat).unwrap();
+        let at = BeatTime::ratio(numerator, denominator).unwrap();
+        let half_step = grid.tick_duration().scale(&Q::new(Z::from(1), Z::from(2)));
+
+        for convention in [
+            RoundingConvention::NearestHalfAwayFromZero,
+            RoundingConvention::NearestHalfToEven,
+        ] {
+            let quantized = grid.quantize(&at, convention);
+            prop_assert!(
+                quantized.residual.abs() <= half_step,
+                "residual {} exceeds half a step",
+                quantized.residual
+            );
+            let on_grid = grid.tick_time(&quantized.value);
+            prop_assert_eq!(grid.quantize(&on_grid, convention).value, quantized.value);
+        }
+    }
+
+    /// UMT-3.2 section 9.8, endpoint-preserving profile: the integer children
+    /// sum to the parent, and every residual is reported.
+    #[test]
+    fn endpoint_preserving_allocation_sums_to_the_parent(
+        weights in prop::collection::vec(1i64..=9, 1..=7),
+        parent_ticks in 1i64..=480,
+        ticks_per_beat in 1u32..=192,
+    ) {
+        let grid = TickGrid::new(ticks_per_beat).unwrap();
+        let weights: Vec<Q> = weights.into_iter().map(|w| Q::from(Z::from(w))).collect();
+        let allocation = grid
+            .allocate_preserving_endpoint(
+                &weights,
+                &Z::from(parent_ticks),
+                &AllocationPolicy::default(),
+            )
+            .unwrap()
+            .into_allocation()
+            .expect("no minimum span was declared, so this is always feasible");
+
+        prop_assert_eq!(allocation.total_ticks(), Z::from(parent_ticks));
+        prop_assert!(allocation.endpoint_preserved());
+        prop_assert_eq!(allocation.children().len(), weights.len());
+
+        // Residuals are relative to the exact structural child duration, and
+        // they cancel: that is what preserving the endpoint amounts to.
+        let sum: Beats = allocation
+            .children()
+            .iter()
+            .map(|child| child.residual().clone())
+            .sum();
+        prop_assert_eq!(sum, Beats::zero());
+    }
+
+    /// UMT-3.2 section 9.9: a tempo map in the homeomorphism profile is
+    /// strictly increasing and invertible on its declared domain.
+    #[test]
+    fn a_tempo_map_is_strictly_increasing_and_invertible(
+        gaps in prop::collection::vec((1i64..=8, 1u32..=400), 2..=5),
+    ) {
+        let mut breakpoints = Vec::new();
+        let mut beat = 0i64;
+        let mut seconds = 0.0f64;
+        breakpoints.push(TempoBreakpoint::new(BeatTime::zero(), ClockTime::ZERO));
+        for (beats, centiseconds) in &gaps {
+            beat += beats;
+            seconds += f64::from(*centiseconds) / 100.0;
+            breakpoints.push(TempoBreakpoint::new(
+                BeatTime::ratio(beat, 1).unwrap(),
+                ClockTime::new(seconds).unwrap(),
+            ));
+        }
+        let map = TempoMap::new(breakpoints).unwrap();
+
+        // Strictly increasing on the structural domain.
+        let mut previous: Option<ClockTime> = None;
+        for step in 0..=(beat * 2) {
+            let at = BeatTime::ratio(step, 2).unwrap();
+            let clock = map.clock_time(&at).unwrap();
+            if let Some(previous) = previous {
+                prop_assert!(clock > previous, "{at} went backwards");
+            }
+            previous = Some(clock);
+        }
+
+        // Endpoint-consistent, and a bijection onto the declared range.
+        prop_assert_eq!(map.clock_time(map.domain().start()).unwrap(), map.range().start());
+        prop_assert_eq!(map.clock_time(map.domain().end()).unwrap(), map.range().end());
+        prop_assert!(map.clock_time(&BeatTime::ratio(beat + 1, 1).unwrap()).is_err());
+    }
+
+    /// UMT-3.2 section 9.10, STP profile: a network reported consistent really
+    /// does admit the assignment the solver returns.
+    #[test]
+    fn a_consistent_stp_assignment_satisfies_every_constraint(
+        edges in prop::collection::vec((0usize..4, 0usize..4, -8i64..=8, 0i64..=8), 1..=8),
+    ) {
+        let mut problem = StpProblem::new();
+        let names: Vec<TimeVarId> = (0..4).map(|index| problem.variable(&format!("t{index}"))).collect();
+
+        let mut declared = Vec::new();
+        for (from, to, lower, width) in edges {
+            if from == to {
+                continue;
+            }
+            let constraint = DifferenceConstraint::between(
+                &names[from],
+                &names[to],
+                Some(Q::from(Z::from(lower))),
+                Some(Q::from(Z::from(lower + width))),
+            );
+            problem.constrain(constraint.clone()).unwrap();
+            declared.push(constraint);
+        }
+
+        let outcome = problem.solve();
+        if let Some(assignment) = outcome.assignment() {
+            for constraint in &declared {
+                let gap = &assignment[&constraint.to] - &assignment[&constraint.from];
+                prop_assert!(
+                    constraint.lower.as_ref().is_none_or(|lower| gap >= *lower),
+                    "lower bound violated: {gap}"
+                );
+                prop_assert!(
+                    constraint.upper.as_ref().is_none_or(|upper| gap <= *upper),
+                    "upper bound violated: {gap}"
+                );
+            }
+        }
+    }
+
+    /// UMT-3.2 section 5.10.2: a feasible linear system yields an assignment
+    /// that satisfies it, strict inequalities included.
+    #[test]
+    fn a_feasible_linear_system_yields_a_satisfying_assignment(
+        bounds in prop::collection::vec((-6i64..=6, 0i64..=6, prop::bool::ANY), 1..=5),
+    ) {
+        let mut problem = LinearTemporalProblem::new();
+        let x = problem.variable("x");
+        let y = problem.variable("y");
+
+        let mut declared = Vec::new();
+        for (offset, width, strict) in bounds {
+            // A band on x + y, wide enough to stay satisfiable on its own.
+            let terms = [(x.clone(), Q::from(Z::from(1))), (y.clone(), Q::from(Z::from(1)))];
+            let constraint = if strict {
+                LinearConstraint::less_than(terms, Q::from(Z::from(offset + width + 20)))
+            } else {
+                LinearConstraint::at_most(terms, Q::from(Z::from(offset + width + 20)))
+            };
+            problem.constrain(constraint.clone()).unwrap();
+            declared.push(constraint);
+        }
+
+        let outcome = problem.solve().unwrap();
+        let assignment = outcome
+            .assignment()
+            .expect("a band bounded only above is always feasible");
+        for constraint in &declared {
+            let value: Q = constraint
+                .coefficients
+                .iter()
+                .map(|(variable, coefficient)| coefficient * &assignment[variable])
+                .sum();
+            if constraint.strict {
+                prop_assert!(value < constraint.bound, "{value} !< {}", constraint.bound);
+            } else {
+                prop_assert!(value <= constraint.bound, "{value} !<= {}", constraint.bound);
+            }
+        }
+    }
+
+    /// UMT-3.2 section 2.1: applying a proportion to a rate and to the
+    /// reciprocal duration uses reciprocal factors.
+    #[test]
+    fn an_oriented_ratio_inverts_across_the_reciprocal(
+        numerator in 1i64..=32,
+        denominator in 1i64..=32,
+    ) {
+        let ratio = Q::new(Z::from(numerator), Z::from(denominator));
+        let as_rate = OrientedRatio::new(ratio.clone(), RatioOrientation::Rate).unwrap();
+        let as_duration = OrientedRatio::new(ratio.clone(), RatioOrientation::Duration).unwrap();
+
+        // The two factors are reciprocals of one another.
+        prop_assert_eq!(as_rate.rate_factor() * as_rate.duration_factor(), Q::from(Z::from(1)));
+        prop_assert_eq!(as_rate.rate_factor(), as_duration.duration_factor());
+
+        // Reorienting is an involution that preserves both factors.
+        let reoriented = as_rate.reoriented();
+        prop_assert_eq!(reoriented.rate_factor(), as_rate.rate_factor());
+        prop_assert_eq!(reoriented.duration_factor(), as_rate.duration_factor());
+        prop_assert_eq!(reoriented.reoriented(), as_rate.clone());
+
+        // And a round trip through a duration returns exactly.
+        let beat = BeatDuration::one();
+        let stretched = as_rate.scale_duration(&beat).unwrap();
+        let restored = as_duration.scale_duration(&stretched).unwrap();
+        prop_assert_eq!(restored, beat);
     }
 
     /// Prompt section 10: the Smith normal form reconstructs its input, its

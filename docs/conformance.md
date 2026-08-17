@@ -25,43 +25,52 @@ Status values:
 | F7 | Enharmonic spelling | pass | `tests/conformance.rs::f07_enharmonic_spelling` |
 | F8 | Unequal voice count | pass | `tests/conformance.rs::f08_unequal_voice_count` |
 | F9 | Tie round trip | pending | needs the score layer |
-| F10 | 6/8 versus 3/4 | pending | needs meter |
-| F11 | Additive 2+2+3 | pending | needs rhythm trees |
-| F12 | Naive quintuplet floor gives 95 | pending | needs quantization |
-| F13 | Endpoint-preserving quintuplet gives 96 | pending | needs quantization |
-| F14 | Nested tuplet re-realization at two PPQN | pending | needs quantization |
-| F15 | Strictly increasing but discontinuous tempo map | pending | needs tempo maps |
-| F16 | STP contradiction | pending | needs the temporal solver |
-| F17 | Ratio constraint is not a difference edge | pending | needs the temporal solver |
-| F18 | External temporal predicate | pending | needs temporal constraints |
+| F10 | 6/8 versus 3/4 | pass | `tests/conformance.rs::f10_six_eight_versus_three_four` |
+| F11 | Additive 2+2+3 | pass | `tests/conformance.rs::f11_additive_two_two_three` |
+| F12 | Naive quintuplet floor gives 95 | pass | `tests/conformance.rs::f12_naive_quintuplet_floor` |
+| F13 | Endpoint-preserving quintuplet gives 96 | pass | `tests/conformance.rs::f13_endpoint_preserving_quintuplet` |
+| F14 | Nested tuplet re-realization at two PPQN | pass | `tests/conformance.rs::f14_nested_tuplet_re_realization` |
+| F15 | Strictly increasing but discontinuous tempo map | pass | `tests/conformance.rs::f15_strictly_increasing_but_discontinuous` |
+| F16 | STP contradiction | pass | `tests/conformance.rs::f16_stp_contradiction` |
+| F17 | Ratio constraint is not a difference edge | pass | `tests/conformance.rs::f17_ratio_constraint_is_not_a_difference_edge` |
+| F18 | External temporal predicate | pass | `tests/conformance.rs::f18_external_temporal_predicate` |
 | F19 | Inharmonic empirical scale | pending | needs the L3 scale object |
 | F20 | Continuous pitch trajectory | pass | `tests/conformance.rs::f20_continuous_pitch` |
 | F21 | Scala mixed exact and metric entries | pending | needs the `.scl` adapter |
 | F22 | Reachable versus ambient octave classes | pass | `tests/conformance.rs::f22_reachable_versus_ambient_classes` |
 | F23 | Unmeasured event without fixed onset | pending | needs the score layer |
 | F24 | Global control event without a voice | pending | needs the score layer |
-| F25 | Strict ratio positivity, no invented delta | pending | needs the temporal solver |
+| F25 | Strict ratio positivity, no invented delta | pass | `tests/conformance.rs::f25_strict_ratio_positivity` |
 | F26 | Unattained optimization infimum | pass | `tests/conformance.rs::f26_unattained_optimization_infimum` |
-| F27 | Infeasible positive-span device allocation | pending | needs quantization |
+| F27 | Infeasible positive-span device allocation | pass | `tests/conformance.rs::f27_infeasible_positive_span_allocation` |
 | F28 | Context-dependent realization typing | pass | `tests/conformance.rs::f28_context_dependent_realization_typing` |
 | F29 | Direct empirical object without a unit | pending | needs the native container |
 | F30 | Markdown math-source and vocabulary lint | pending | source lint, not a library test |
 | F31 | Regular interval tuning requires a point reference | pass | `tests/conformance.rs::f31_regular_tuning_requires_a_point_reference` |
-| F32 | Reciprocal rate and duration orientation | pending | needs the rate-continuum interface |
+| F32 | Reciprocal rate and duration orientation | pass | `tests/conformance.rs::f32_reciprocal_rate_and_duration_orientation` |
 | F33 | Saturation excludes the zero multiplier | pass | `tests/conformance.rs::f33_saturation_excludes_the_zero_multiplier` |
 | F34 | Group length versus lattice norm | pass | `tests/conformance.rs::f34_group_length_versus_lattice_norm` |
 | F35 | Three-note quarter-comma-meantone MOS | pending | needs generated sets |
 
-Fifteen of the thirty-five fixtures pass; none is partial. Every remaining one
-depends on a layer that does not exist yet - time, score, device, the native
-container, an external adapter, or generated sets.
+Twenty-seven of the thirty-five fixtures pass; none is partial. Every remaining
+one depends on a layer that does not exist yet - the score layer, the device
+layer, the native container, an external adapter, or generated sets - except
+F30, which is a lint over the specification source rather than a library test.
 
-F20's two obligations are both discharged, and are worth naming because they
-are easy to claim loosely. The trajectory survives a native round trip through
-`PitchTrajectoryRef`, exactly - not to within a tolerance. And the device
-export records an approximation whose bound is *derived* from the deviation's
-Lipschitz constant, then checked against the reconstruction at a thousand
-intermediate times rather than asserted.
+Two of them are worth naming, because both are easy to claim loosely.
+
+F20's obligations are discharged in full: the trajectory survives a native
+round trip through `PitchTrajectoryRef` *exactly*, not to within a tolerance,
+and the device export records an approximation whose bound is derived from the
+deviation's Lipschitz constant, then checked against the reconstruction at a
+thousand intermediate times rather than asserted.
+
+F25 is discharged by construction rather than by care. The linear profile
+solves strict inequalities directly, by exact Fourier-Motzkin elimination over
+the rationals, so there is no point at which a `delta` would be convenient. One
+can still be declared - but `PositivityHandling::JustifiedDelta` has a
+mandatory `justification` field, so a `delta` with no stated justification is
+not a value this crate can represent.
 
 ## Law coverage
 
@@ -92,6 +101,14 @@ UMT-3.2 section 9.1 and prompt section 47 laws currently exercised, in
 | Section 4.4.2 declared-span cost | `declared_span_cost_is_the_sum_of_its_terms` |
 | Section 4.4.5 declared versus minimum | `the_family_minimum_is_no_worse_than_any_member` |
 | Section 9.5 voice-leading metric laws | `the_edit_profile_obeys_the_metric_laws`, plus the unit tests in `src/pitch/voice_leading.rs` |
+| Section 9.7 rhythm-tree laws | `rhythm_tree_flattening_partitions_the_parent`; law 1 is a construction condition, law 5 is `tests/serialization.rs::time_layer_objects_round_trip_and_revalidate` |
+| Section 9.8 floor and ceiling profiles | `floor_and_ceiling_are_order_adjunctions` |
+| Section 9.8 nearest profile | `nearest_quantization_is_bounded_but_not_one_sided` |
+| Section 9.8 endpoint-preserving profile | `endpoint_preserving_allocation_sums_to_the_parent` |
+| Section 9.9 tempo-map laws | `a_tempo_map_is_strictly_increasing_and_invertible` |
+| Section 9.10 STP profile | `a_consistent_stp_assignment_satisfies_every_constraint` |
+| Section 9.10 linear-ratio profile | `a_feasible_linear_system_yields_a_satisfying_assignment` |
+| Section 2.1 rate and duration orientation | `an_oriented_ratio_inverts_across_the_reciprocal` |
 
 P8 to P11 run against four mapping shapes - surjective, non-surjective, the
 zero map, and rank 2 - so the degenerate cases are covered rather than assumed
@@ -125,21 +142,29 @@ inherited:
 The declared-span cost of section 4.4.2 is never called a chord metric, which
 section 9.5 forbids without proof.
 
-The notation, rhythm-tree, quantization, tempo-map, and temporal-constraint
-laws are not yet applicable: the structures they constrain do not exist.
+Section 9.10 also deserves a note, for the same reason. The STP profile is the
+only one given the unconditional shortest-path consistency claim, and it is the
+only one whose solver runs Floyd-Warshall. A ratio constraint cannot reach that
+solver: `StpProblem::constrain` accepts a `DifferenceConstraint` and nothing
+else, and `RatioConstraint` cross-multiplies into `LinearConstraint`, which
+`StpProblem` has no method for. The separation is in the types, not in a
+runtime check that could be bypassed.
+
+The notation and generated-structure laws are not yet applicable: the
+structures they constrain do not exist.
 
 ## Examples
 
-Prompt section 49 requires executable examples. Three of the six are possible
-at this stage:
+Prompt section 49 requires executable examples. Five of the six are possible at
+this stage:
 
 | Example | Subject | File |
 |---|---|---|
 | 1 | 12-EDO temperament end to end | `examples/temperament_12edo.rs` |
 | 2 | 6-EDO image distinction | `examples/temperament_6edo_image.rs` |
 | 3 | Adaptive lift selection | `examples/adaptive_lift.rs` |
-| 4 | Quintuplet quantization | pending, needs the time layer |
-| 5 | Unmeasured event | pending, needs temporal constraints |
+| 4 | Quintuplet quantization | `examples/quintuplet_quantization.rs` |
+| 5 | Unmeasured event | `examples/unmeasured_event.rs` |
 | 6 | Performance compilation | pending, needs the device layer |
 
 Example 1 stops short of the regular tuning its prompt text mentions, because

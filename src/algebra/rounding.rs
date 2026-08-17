@@ -30,6 +30,60 @@ pub enum RoundingConvention {
 }
 
 impl RoundingConvention {
+    /// Applies this convention to an exact rational, exactly.
+    ///
+    /// This is the path that matters above L3: a structural onset quantized to
+    /// a device grid has an exact rational coordinate, and rounding it through
+    /// `f64` would make the result depend on a representation the source data
+    /// never had (UMT-3.2 section 0.6.1).
+    #[must_use]
+    pub fn apply_q(self, value: &crate::algebra::Q) -> crate::algebra::Z {
+        use num_integer::Integer;
+        use num_traits::{One, Zero};
+
+        // `BigRational` keeps the denominator positive, so flooring the
+        // numerator against it is the ordinary floor.
+        let floor = value.numer().div_floor(value.denom());
+        let fractional = value - crate::algebra::Q::from(floor.clone());
+        let half = crate::algebra::Q::new(crate::algebra::Z::one(), crate::algebra::Z::from(2));
+
+        match self {
+            Self::Floor => floor,
+            Self::Ceiling => {
+                if fractional.numer().is_zero() {
+                    floor
+                } else {
+                    floor + crate::algebra::Z::one()
+                }
+            }
+            Self::NearestHalfAwayFromZero => match fractional.cmp(&half) {
+                core::cmp::Ordering::Less => floor,
+                core::cmp::Ordering::Greater => floor + crate::algebra::Z::one(),
+                // An exact half: away from zero means up for a positive value
+                // and down for a negative one, and `floor` is already the
+                // lower neighbour.
+                core::cmp::Ordering::Equal => {
+                    if value.numer().sign() == num_bigint::Sign::Minus {
+                        floor
+                    } else {
+                        floor + crate::algebra::Z::one()
+                    }
+                }
+            },
+            Self::NearestHalfToEven => match fractional.cmp(&half) {
+                core::cmp::Ordering::Less => floor,
+                core::cmp::Ordering::Greater => floor + crate::algebra::Z::one(),
+                core::cmp::Ordering::Equal => {
+                    if floor.is_even() {
+                        floor
+                    } else {
+                        floor + crate::algebra::Z::one()
+                    }
+                }
+            },
+        }
+    }
+
     /// Applies this convention to an L3 real value.
     ///
     /// This is the *metric* path, used when the source quantity is only

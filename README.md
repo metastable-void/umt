@@ -7,23 +7,30 @@ choice made explicit.
 
 ## Status
 
-Early, but the exact structural core is complete and the pitch layer is done
-apart from L0 notation. Implemented: the proportion lattice; exact integer
-matrices with Smith and canonical Hermite normal forms; free lattices and
-quotients; regular temperament mappings with their image and kernel lattices;
-comma-subgroup saturation validation; equal divisions; homomorphic splittings;
-representative policies including a provably bounded minimum-complexity
-search; the structural quotient lens; unit equivalence; declared complexity
-profiles; first-class optimization outcomes; pitch units, point torsors,
-regular tuning, and contextual realization; chords with voice identity; voice
-leading as a span with declared costs and honestly-scoped distance claims;
-continuous pitch trajectories with derived sampling bounds; and an immutable
+The exact structural core, the pitch layer, and the time layer are built. What
+remains is the score layer, the device boundary, the native container, and the
+external adapters.
+
+Implemented: the proportion lattice; exact integer matrices with Smith and
+canonical Hermite normal forms; free lattices and quotients; regular
+temperament mappings with their image and kernel lattices; comma-subgroup
+saturation validation; equal divisions; homomorphic splittings; representative
+policies including a provably bounded minimum-complexity search; the structural
+quotient lens; unit equivalence; declared complexity profiles; first-class
+optimization outcomes; pitch units, point torsors, regular tuning, and
+contextual realization; chords with voice identity; voice leading as a span
+with declared costs and honestly-scoped distance claims; continuous pitch
+trajectories with derived sampling bounds; exact structural time with rhythm
+trees, meter, and grouping; the rate/duration orientation rule; grid
+quantization that returns its residuals; tempo maps in the homeomorphism
+profile; three separate temporal-constraint solver profiles; and an immutable
 theory context with reference-based serialization.
 
-**Fifteen of the thirty-five UMT-3.2 fixtures pass**, and every remaining one
-depends on a layer that is not built yet: time, score, device, the native
-container, external adapters, or generated sets. See `docs/architecture.md`
-for the staging plan and `docs/conformance.md` for the fixture matrix.
+**Twenty-seven of the thirty-five UMT-3.2 fixtures pass.** Every remaining one
+depends on a layer that is not built yet - score, device, the native container,
+external adapters, or generated sets - except F30, which lints the
+specification source rather than the library. See `docs/architecture.md` for
+the staging plan and `docs/conformance.md` for the fixture matrix.
 
 This crate does not yet claim UMT-3.2 conformance. Conformance is claimed only
 when the applicable mandatory fixture suite passes.
@@ -150,6 +157,42 @@ assert!(balanced.distance(&single, &doubled).is_err());
 // and charges exactly the birth cost it was configured with.
 let edit = ChordDistance::new(ground, 1.0, TransportProfile::Edit { boundary: 0.75 })?;
 assert!((edit.distance(&single, &doubled)? - 0.75).abs() < 1e-12);
+# Ok::<(), Box<dyn core::error::Error>>(())
+```
+
+Structural time is exact, so a quintuplet inside a triplet closes exactly.
+Quantizing it to a device grid returns the residual alongside the value, and
+the method that preserves the parent endpoint is a different method from the
+one that does not (fixtures F12 and F13):
+
+```rust
+use umt::algebra::RoundingConvention;
+use umt::time::{AllocationPolicy, BeatSpan, BeatTime, Beats, RhythmTree, TickGrid};
+use umt::{Q, Z};
+
+// Five equal notes in one beat: one fifteenth of a beat each after a further
+// triplet division, and no binary float represents that.
+let quintuplet = RhythmTree::equal_division(5)?;
+let beat = BeatSpan::new(BeatTime::zero(), BeatTime::ratio(1, 1)?)?;
+let leaves = quintuplet.flatten(&beat)?;
+assert_eq!(leaves[0].span().duration(), Beats::ratio(1, 5)?);
+assert_eq!(leaves[4].span().end(), beat.end(), "the partition closes exactly");
+
+// On a 96-tick grid each note is 19.2 ticks. Rounding each one independently
+// loses a tick; rounding the boundaries does not.
+let grid = TickGrid::new(96)?;
+let weights = vec![Q::from(Z::from(1)); 5];
+
+let naive = grid.allocate_locally(&weights, &Z::from(96), RoundingConvention::Floor)?;
+assert_eq!(naive.total_ticks(), Z::from(95));
+assert!(!naive.endpoint_preserved());
+
+let exact = grid
+    .allocate_preserving_endpoint(&weights, &Z::from(96), &AllocationPolicy::default())?
+    .into_allocation()
+    .expect("feasible");
+assert_eq!(exact.child_ticks(), [19, 19, 20, 19, 19].map(Z::from));
+assert!(exact.endpoint_preserved());
 # Ok::<(), Box<dyn core::error::Error>>(())
 ```
 

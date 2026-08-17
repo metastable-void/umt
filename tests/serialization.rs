@@ -16,7 +16,10 @@ use umt::proportion::{
 };
 use umt::realization::provenance::ProvenanceId;
 use umt::temperament::{AmbientLattice, TemperamentMap};
-use umt::time::{Seconds, TimeSpan};
+use umt::time::{
+    BeatSpan, BeatTime, ClockTime, DifferenceConstraint, Meter, RhythmTree, Seconds,
+    SecondsPerBeat, TempoMap, TimeSignature, TimeSpan, TimeVarId,
+};
 use umt::{Q, Z};
 
 fn huge_rational() -> Q {
@@ -225,4 +228,76 @@ fn pitch_layer_objects_round_trip_and_revalidate() {
     );
     let forwards: TimeSpan = serde_json::from_str("{\"start\":1.0,\"end\":2.0}").unwrap();
     assert_eq!(forwards.duration(), Seconds::new(1.0).unwrap());
+}
+
+#[test]
+fn time_layer_objects_round_trip_and_revalidate() {
+    // Exact structural values are canonical text, never floating point.
+    let onset = BeatTime::ratio(1, 3).unwrap();
+    let json = serde_json::to_string(&onset).unwrap();
+    assert_eq!(
+        json, "\"1/3\"",
+        "exact structural time is exact on the wire"
+    );
+    assert_eq!(serde_json::from_str::<BeatTime>(&json).unwrap(), onset);
+
+    // UMT-3.2 section 9.7, law 5: serialization preserves tree topology and
+    // weights.
+    let tree = RhythmTree::division([
+        RhythmTree::equal_division(5).unwrap(),
+        RhythmTree::weighted_leaf(Q::new(Z::from(3), Z::from(2))).unwrap(),
+    ])
+    .unwrap();
+    let json = serde_json::to_string(&tree).unwrap();
+    assert!(json.contains("\"3/2\""), "weights are exact text: {json}");
+    let parsed: RhythmTree = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed, tree);
+    assert_eq!(parsed.leaf_count(), tree.leaf_count());
+    assert_eq!(parsed.depth(), tree.depth());
+
+    // A non-positive weight is rejected on load, not accepted and tripped
+    // over later.
+    let forged = json.replace("\"3/2\"", "\"-3/2\"");
+    assert!(serde_json::from_str::<RhythmTree>(&forged).is_err());
+
+    // A meter revalidates its level nesting on load.
+    let meter = Meter::compound(TimeSignature::new(6, 8).unwrap()).unwrap();
+    let json = serde_json::to_string(&meter).unwrap();
+    assert_eq!(serde_json::from_str::<Meter>(&json).unwrap(), meter);
+    let broken = json.replace("[[0,1,2,3,4,5],[0,3],[0]]", "[[0,1,2,3,4,5],[0,3],[1]]");
+    assert_ne!(broken, json, "the test data must actually have been edited");
+    assert!(
+        serde_json::from_str::<Meter>(&broken).is_err(),
+        "a level that is not nested must be rejected on load"
+    );
+
+    // A tempo map revalidates the homeomorphism conditions on load.
+    let map = TempoMap::constant(
+        &BeatSpan::new(BeatTime::zero(), BeatTime::ratio(4, 1).unwrap()).unwrap(),
+        ClockTime::ZERO,
+        SecondsPerBeat::new(0.5).unwrap(),
+    )
+    .unwrap();
+    let json = serde_json::to_string(&map).unwrap();
+    assert_eq!(serde_json::from_str::<TempoMap>(&json).unwrap(), map);
+    let jump = "{\"breakpoints\":[{\"beat\":\"0/1\",\"clock\":0.0},\
+                {\"beat\":\"2/1\",\"clock\":1.0},{\"beat\":\"2/1\",\"clock\":3.0}]}";
+    assert!(
+        serde_json::from_str::<TempoMap>(jump).is_err(),
+        "a discontinuous map must be rejected on load"
+    );
+
+    // Constraint bounds are exact text too.
+    let constraint = DifferenceConstraint::between(
+        &TimeVarId::new("a"),
+        &TimeVarId::new("b"),
+        Some(Q::new(Z::from(1), Z::from(3))),
+        None,
+    );
+    let json = serde_json::to_string(&constraint).unwrap();
+    assert!(json.contains("\"1/3\""), "{json}");
+    assert_eq!(
+        serde_json::from_str::<DifferenceConstraint>(&json).unwrap(),
+        constraint
+    );
 }

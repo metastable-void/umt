@@ -94,3 +94,86 @@ pub mod q {
         q_from_str(&text).ok_or_else(|| serde::de::Error::custom("malformed exact rational"))
     }
 }
+
+/// Optional exact rational, as canonical text or `null`.
+pub mod option_q {
+    use alloc::string::String;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    use crate::algebra::Q;
+    use crate::io::text::{q_from_str, q_to_string};
+
+    /// Writes an optional exact rational.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the serializer's own errors.
+    pub fn serialize<S: Serializer>(value: &Option<Q>, serializer: S) -> Result<S::Ok, S::Error> {
+        match value {
+            Some(value) => serializer.serialize_some(&q_to_string(value)),
+            None => serializer.serialize_none(),
+        }
+    }
+
+    /// Reads an optional exact rational.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the text is present and malformed.
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<Q>, D::Error> {
+        let text = Option::<String>::deserialize(deserializer)?;
+        text.map(|text| {
+            q_from_str(&text).ok_or_else(|| serde::de::Error::custom("malformed exact rational"))
+        })
+        .transpose()
+    }
+}
+
+/// A map from string-like keys to exact rationals, with the values as
+/// canonical text.
+pub mod map_q {
+    use alloc::collections::BTreeMap;
+    use alloc::string::String;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    use crate::algebra::Q;
+    use crate::io::text::{q_from_str, q_to_string};
+
+    /// Writes the values as canonical exact text.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the serializer's own errors.
+    pub fn serialize<S, K>(value: &BTreeMap<K, Q>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+        K: Serialize + Ord + Clone,
+    {
+        let encoded: BTreeMap<K, String> = value
+            .iter()
+            .map(|(key, value)| (key.clone(), q_to_string(value)))
+            .collect();
+        encoded.serialize(serializer)
+    }
+
+    /// Reads the values as canonical exact text.
+    ///
+    /// # Errors
+    ///
+    /// Fails if any value is malformed.
+    pub fn deserialize<'de, D, K>(deserializer: D) -> Result<BTreeMap<K, Q>, D::Error>
+    where
+        D: Deserializer<'de>,
+        K: Deserialize<'de> + Ord,
+    {
+        let encoded = BTreeMap::<K, String>::deserialize(deserializer)?;
+        encoded
+            .into_iter()
+            .map(|(key, text)| {
+                q_from_str(&text)
+                    .map(|value| (key, value))
+                    .ok_or_else(|| serde::de::Error::custom("malformed exact rational"))
+            })
+            .collect()
+    }
+}

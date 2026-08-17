@@ -8,12 +8,13 @@
 //! Tests named `*_partial` cover the part of a fixture that the implemented
 //! layers can decide. The remaining obligations are listed in the docs table.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use umt::algebra::QuotientGroup;
 use umt::algebra::lattice::Sublattice;
 use umt::context::TheoryContext;
-use umt::error::{ComplexityError, PitchError, TemperamentError};
+use umt::error::{ComplexityError, PitchError, TemperamentError, TimeError};
 use umt::pitch::{
     AdmissibleFamily, Cents, Chord, ChordDistance, CostQuestion, Deviation, FrequencyHz,
     Interpolation, LogFrequency, LogPitchDistance, MassProfile, MetricClaim, Octaves, PitchOrigin,
@@ -29,8 +30,15 @@ use umt::temperament::{
     RepresentativePolicy, SaturationPolicy, SplitPolicy, StructuralLens, TemperamentMap,
     UnitEquivalence,
 };
-use umt::time::{ClockTime, Seconds, TimeSpan};
-use umt::{Basis, IntMatrix, PatentVal, RoundingConvention, Z};
+use umt::time::{
+    AllocationInfeasibility, AllocationOutcome, AllocationPolicy, BeatDuration, BeatSpan, BeatTime,
+    Beats, BeatsPerSecond, ClockTime, DifferenceConstraint, ExternalPredicate,
+    HybridTemporalProblem, LevelNumbering, LinearTemporalProblem, Meter, OrientedRatio,
+    PositivityHandling, RatioConstraint, RatioOrientation, RhythmTree, Seconds, SecondsPerBeat,
+    SolverProfile, StpProblem, TempoBreakpoint, TempoMap, TemporalOutcome, TickGrid, TimeSignature,
+    TimeSpan, TimeVarId,
+};
+use umt::{Basis, IntMatrix, PatentVal, Q, RoundingConvention, Z};
 
 const NEAREST: RoundingConvention = RoundingConvention::NearestHalfAwayFromZero;
 
@@ -963,6 +971,470 @@ fn f20_continuous_pitch() {
             );
         }
     }
+}
+
+/// F10 - 6/8 versus 3/4.
+///
+/// Equal total span and pulse resolution. The metrical hierarchy must
+/// distinguish the primary-beat point sets (UMT-3.2 section 5.4.1).
+#[test]
+fn f10_six_eight_versus_three_four() {
+    let six_eight = Meter::compound(TimeSignature::new(6, 8).unwrap()).unwrap();
+    let three_four = Meter::simple(TimeSignature::new(3, 4).unwrap()).unwrap();
+
+    // Equal total span, equal pulse resolution.
+    assert_eq!(six_eight.period(), three_four.period());
+    assert_eq!(six_eight.period(), Beats::ratio(3, 1).unwrap());
+    assert_eq!(six_eight.pulse_count(), three_four.pulse_count());
+    assert_eq!(six_eight.pulse(), three_four.pulse());
+
+    // Different primary-beat point sets, in the eighth-note units the fixture
+    // states them in.
+    assert_eq!(six_eight.primary_beat_pulses(), &[0, 3]);
+    assert_eq!(three_four.primary_beat_pulses(), &[0, 2, 4]);
+    assert_ne!(six_eight, three_four);
+
+    // Which is observable as different metrical weight away from the downbeat.
+    assert!(six_eight.weight(3) > six_eight.weight(2));
+    assert!(three_four.weight(2) > three_four.weight(3));
+
+    // The level-numbering convention is recorded rather than assumed
+    // (section 5.4.1).
+    assert_eq!(six_eight.numbering(), LevelNumbering::FinestIsZero);
+}
+
+/// F11 - additive 2+2+3.
+///
+/// The weighted ordered tree preserves the child weights and flattens to the
+/// exact boundaries 0, 2, 4, 7 in the chosen unit.
+#[test]
+fn f11_additive_two_two_three() {
+    let bar = RhythmTree::additive(&[2, 2, 3]).unwrap();
+    assert_eq!(
+        bar.children()
+            .iter()
+            .map(|child| child.weight().clone())
+            .collect::<Vec<_>>(),
+        [2, 2, 3].map(|w| Q::from(Z::from(w))),
+        "the weights survive"
+    );
+
+    let span = BeatSpan::new(BeatTime::zero(), BeatTime::ratio(7, 1).unwrap()).unwrap();
+    let leaves = bar.flatten(&span).unwrap();
+    let boundaries: Vec<Q> = core::iter::once(leaves[0].span().start().get().clone())
+        .chain(leaves.iter().map(|leaf| leaf.span().end().get().clone()))
+        .collect();
+    assert_eq!(boundaries, [0, 2, 4, 7].map(|b| Q::from(Z::from(b))));
+
+    // A grouping structure over the same span is a separate object, as
+    // section 5.4.2 requires, and can be built from the same weights.
+    let meter = Meter::additive(BeatDuration::one(), &[2, 2, 3]).unwrap();
+    assert_eq!(meter.primary_beat_pulses(), &[0, 2, 4]);
+    assert_eq!(meter.period(), Beats::ratio(7, 1).unwrap());
+}
+
+/// F12 - naive quintuplet floor.
+///
+/// `P = 96`, five equal children in one 96-tick parent. Independent local
+/// flooring gives five 19s and an endpoint total of 95
+/// (UMT-3.2 section 5.7.4).
+#[test]
+fn f12_naive_quintuplet_floor() {
+    let grid = TickGrid::new(96).unwrap();
+    let weights = vec![Q::from(Z::from(1)); 5];
+    let allocation = grid
+        .allocate_locally(&weights, &Z::from(96), RoundingConvention::Floor)
+        .unwrap();
+
+    assert_eq!(allocation.child_ticks(), [19, 19, 19, 19, 19].map(Z::from));
+    assert_eq!(allocation.total_ticks(), Z::from(95));
+    assert!(!allocation.endpoint_preserved());
+    assert_eq!(allocation.endpoint_drift(), Z::from(1));
+
+    // Every child residual is reported, exactly: a fifth of a tick each.
+    for child in allocation.children() {
+        assert_eq!(*child.exact_ticks(), Q::new(Z::from(96), Z::from(5)));
+        assert!(child.residual().is_positive(), "floor undershoots");
+    }
+}
+
+/// F13 - endpoint-preserving quintuplet.
+///
+/// The same source, allocated so the integer children sum to 96, with
+/// per-child residuals recorded (UMT-3.2 section 5.7.5).
+#[test]
+fn f13_endpoint_preserving_quintuplet() {
+    let grid = TickGrid::new(96).unwrap();
+    let weights = vec![Q::from(Z::from(1)); 5];
+    let allocation = grid
+        .allocate_preserving_endpoint(&weights, &Z::from(96), &AllocationPolicy::default())
+        .unwrap()
+        .into_allocation()
+        .expect("the allocation is feasible");
+
+    assert_eq!(allocation.child_ticks(), [19, 19, 20, 19, 19].map(Z::from));
+    assert_eq!(allocation.total_ticks(), Z::from(96));
+    assert!(allocation.endpoint_preserved());
+    assert!(allocation.is_endpoint_preserving_method());
+
+    // Residuals are recorded relative to the exact structural child duration,
+    // and they cancel exactly - which is what preserving the endpoint means.
+    let residuals: Vec<Beats> = allocation
+        .children()
+        .iter()
+        .map(|child| child.residual().clone())
+        .collect();
+    assert_eq!(residuals.len(), 5);
+    assert_eq!(residuals.iter().cloned().sum::<Beats>(), Beats::zero());
+    assert!(residuals[2] != residuals[0], "the long child differs");
+}
+
+/// F14 - nested tuplet re-realization at two PPQN.
+///
+/// Both realizations derive from the same exact source tree, not from
+/// re-quantizing the first tick sequence (UMT-3.2 section 5.7.6).
+#[test]
+fn f14_nested_tuplet_re_realization() {
+    // Five inside three.
+    let tree = RhythmTree::division([
+        RhythmTree::equal_division(5).unwrap(),
+        RhythmTree::leaf(1).unwrap(),
+        RhythmTree::leaf(1).unwrap(),
+    ])
+    .unwrap();
+    let beat = BeatSpan::new(BeatTime::zero(), BeatTime::ratio(1, 1).unwrap()).unwrap();
+    let policy = AllocationPolicy::default();
+
+    let coarse = TickGrid::new(96)
+        .unwrap()
+        .quantize_tree(&tree, &beat, &policy)
+        .unwrap();
+    let fine = TickGrid::new(960)
+        .unwrap()
+        .quantize_tree(&tree, &beat, &policy)
+        .unwrap();
+
+    assert!(coarse.is_feasible() && fine.is_feasible());
+    assert_eq!(coarse.tick_count(), Z::from(96));
+    assert_eq!(fine.tick_count(), Z::from(960));
+
+    // Each node keeps the exact structural span it came from, at both
+    // resolutions. Neither result is a function of the other.
+    assert_eq!(coarse.source(), fine.source());
+    assert_eq!(coarse.children()[0].source(), fine.children()[0].source());
+    assert_eq!(
+        coarse.children()[0].source().duration(),
+        Beats::ratio(1, 3).unwrap()
+    );
+
+    // The finer realization is not obtainable by scaling the coarse ticks:
+    // 6 ticks scaled by ten is 60, and the correct value is 64.
+    assert_eq!(coarse.leaf_ticks()[0], (Z::from(0), Z::from(6)));
+    assert_eq!(fine.leaf_ticks()[0], (Z::from(0), Z::from(64)));
+    assert_ne!(
+        &coarse.leaf_ticks()[0].1 * Z::from(10),
+        fine.leaf_ticks()[0].1
+    );
+}
+
+/// F15 - strictly increasing but discontinuous candidate.
+///
+/// A strictly increasing map with a jump is not a homeomorphism onto the
+/// desired continuous interval, and the tempo profile rejects it
+/// (UMT-3.2 sections 5.8 and 9.9).
+#[test]
+fn f15_strictly_increasing_but_discontinuous() {
+    let at = |beats: i64| BeatTime::ratio(beats, 1).unwrap();
+    let clock = |seconds: f64| ClockTime::new(seconds).unwrap();
+
+    // Clock time leaps by two seconds at beat 2. Every clock value is larger
+    // than the last, so a monotonicity test alone would accept it.
+    let candidate = [
+        TempoBreakpoint::new(BeatTime::zero(), clock(0.0)),
+        TempoBreakpoint::new(at(2), clock(1.0)),
+        TempoBreakpoint::new(at(2), clock(3.0)),
+        TempoBreakpoint::new(at(4), clock(4.0)),
+    ];
+    let strictly_increasing = candidate
+        .windows(2)
+        .all(|pair| pair[1].clock > pair[0].clock);
+    assert!(strictly_increasing, "the clock values do increase strictly");
+
+    assert!(
+        matches!(
+            TempoMap::new(candidate),
+            Err(TimeError::DiscontinuousTempoMap { .. })
+        ),
+        "and it is still rejected, because continuity is also required"
+    );
+
+    // The sanctioned representation of the same intent: an explicit structural
+    // span, subsequently stretched (section 5.8.4).
+    let base = TempoMap::constant(
+        &BeatSpan::new(BeatTime::zero(), at(4)).unwrap(),
+        ClockTime::ZERO,
+        SecondsPerBeat::new(0.5).unwrap(),
+    )
+    .unwrap();
+    let with_fermata = base
+        .with_structural_pause(&at(2), &BeatDuration::one(), Seconds::new(2.0).unwrap())
+        .unwrap();
+    assert_eq!(*with_fermata.domain().end(), at(5));
+    assert!((with_fermata.clock_time(&at(3)).unwrap().get() - 3.0).abs() < 1e-12);
+}
+
+/// F16 - STP contradiction.
+///
+/// Constraints implying both `t2 - t1 <= 1` and `t2 - t1 >= 2` are
+/// inconsistent, and the STP solver says so (UMT-3.2 section 5.10.1).
+#[test]
+fn f16_stp_contradiction() {
+    let mut problem = StpProblem::new();
+    let t1 = problem.variable("t1");
+    let t2 = problem.variable("t2");
+    problem
+        .constrain(DifferenceConstraint::at_most(&t1, &t2, Q::from(Z::from(1))))
+        .unwrap();
+    problem
+        .constrain(DifferenceConstraint::at_least(
+            &t1,
+            &t2,
+            Q::from(Z::from(2)),
+        ))
+        .unwrap();
+
+    let outcome = problem.solve();
+    assert!(!outcome.is_consistent());
+    assert_eq!(outcome.profile(), SolverProfile::SimpleTemporal);
+    assert!(matches!(outcome, TemporalOutcome::Inconsistent { .. }));
+    assert!(
+        outcome.assignment().is_none(),
+        "no assignment is fabricated for an inconsistent network"
+    );
+}
+
+/// F17 - a ratio constraint is not representable as a difference edge.
+///
+/// A three-event bounded ratio constraint is routed to the linear-ratio
+/// profile, not silently passed to a shortest-path solver as one graph edge
+/// (UMT-3.2 section 5.10.2).
+#[test]
+fn f17_ratio_constraint_is_not_a_difference_edge() {
+    let mut problem = LinearTemporalProblem::new();
+    let a = problem.variable("a");
+    let b = problem.variable("b");
+    let c = problem.variable("c");
+
+    problem
+        .constrain_ratio(&RatioConstraint {
+            earlier: a.clone(),
+            middle: b.clone(),
+            later: c.clone(),
+            lower: Q::from(Z::from(1)),
+            upper: Q::from(Z::from(2)),
+        })
+        .unwrap();
+
+    // Cross-multiplication yields three-variable constraints with non-unit
+    // coefficients: not difference bounds, by inspection.
+    let three_variable = problem
+        .constraints()
+        .iter()
+        .filter(|constraint| constraint.coefficients.len() == 3)
+        .count();
+    assert_eq!(three_variable, 2);
+    assert!(
+        problem.constraints().iter().any(|constraint| constraint
+            .coefficients
+            .values()
+            .any(|a| *a != Q::from(Z::from(1)) && *a != Q::from(Z::from(-1)))),
+        "and the coefficients are not all plus or minus one"
+    );
+
+    // The result reports the profile that actually decided it, and the STP
+    // profile is not that profile - `StpProblem` accepts only
+    // `DifferenceConstraint`, so there is no path by which this could have
+    // reached Floyd-Warshall.
+    let outcome = problem.solve().unwrap();
+    assert_eq!(outcome.profile(), SolverProfile::LinearRatio);
+    assert!(outcome.is_consistent());
+}
+
+/// F18 - external temporal predicate.
+///
+/// "Enter after detected decay threshold" remains typed external data unless
+/// an acoustic detector is configured, and no static-decidability claim is
+/// made (UMT-3.2 section 5.10.3).
+#[test]
+fn f18_external_temporal_predicate() {
+    let mut problem = HybridTemporalProblem::new(LinearTemporalProblem::new());
+    problem.add_predicate(ExternalPredicate {
+        id: String::from("after-decay"),
+        predicate_type: String::from("umt:predicate:acoustic-decay-threshold"),
+        contract: String::from(
+            "true once the measured level of the referenced sound falls below the stated \
+             threshold, as reported by a configured detector",
+        ),
+        parameters: BTreeMap::from([
+            (String::from("threshold_db"), String::from("-40")),
+            (String::from("source"), String::from("voice:1")),
+        ]),
+    });
+
+    // No detector: the predicate is outstanding, and nothing claims otherwise.
+    let outcome = problem.solve(None).unwrap();
+    assert!(!problem.claims_static_decidability());
+    assert_eq!(outcome.unresolved(), ["after-decay"]);
+    assert!(matches!(outcome, TemporalOutcome::PartiallySolved { .. }));
+
+    // The predicate is data with a declared contract, never code. Everything
+    // it carries is a string, and there is no field that could hold a
+    // callback to deserialize.
+    let predicate = &problem.predicates()[0];
+    assert_eq!(
+        predicate.predicate_type,
+        "umt:predicate:acoustic-decay-threshold"
+    );
+    assert!(predicate.contract.contains("configured detector"));
+    assert_eq!(predicate.parameters["threshold_db"], "-40");
+    let json = serde_json::to_string(predicate).unwrap();
+    let parsed: ExternalPredicate = serde_json::from_str(&json).unwrap();
+    assert_eq!(&parsed, predicate);
+}
+
+/// F25 - strict ratio positivity, with no invented delta.
+///
+/// A ratio constraint whose denominator is required only to be strictly
+/// positive keeps its strict inequality; the solver does not invent a
+/// `delta > 0` to make it fit (UMT-3.2 section 5.10.2).
+#[test]
+fn f25_strict_ratio_positivity() {
+    let ratio = RatioConstraint {
+        earlier: TimeVarId::new("a"),
+        middle: TimeVarId::new("b"),
+        later: TimeVarId::new("c"),
+        lower: Q::from(Z::from(1)),
+        upper: Q::from(Z::from(2)),
+    };
+
+    let mut strict = LinearTemporalProblem::new();
+    for id in ["a", "b", "c"] {
+        strict.variable(id);
+    }
+    assert_eq!(*strict.positivity(), PositivityHandling::StrictInequality);
+    strict.constrain_ratio(&ratio).unwrap();
+
+    // The positivity condition is present, strict, and bounded by zero: no
+    // positive lower bound was introduced anywhere.
+    let denominator = strict
+        .constraints()
+        .iter()
+        .find(|constraint| constraint.strict)
+        .expect("the strict positivity condition");
+    assert_eq!(denominator.bound, Q::from(Z::from(0)));
+    assert!(strict.solve().unwrap().is_consistent());
+
+    // A delta is available, but only bundled with the justification that
+    // licenses it - and it genuinely changes the feasible set, which is why
+    // inventing one would have been wrong.
+    let justified =
+        LinearTemporalProblem::new().with_positivity(PositivityHandling::JustifiedDelta {
+            delta: Q::from(Z::from(1)),
+            justification: String::from("the source specifies a minimum notated eighth"),
+        });
+    let PositivityHandling::JustifiedDelta { justification, .. } = justified.positivity() else {
+        panic!("the declared handling should be the justified delta");
+    };
+    assert!(
+        !justification.is_empty(),
+        "a delta carries its justification"
+    );
+}
+
+/// F27 - infeasible positive-span device allocation.
+///
+/// Three children, each requiring at least one tick, into a two-tick parent.
+/// Infeasibility - or an explicitly selected collapse - is reported
+/// (UMT-3.2 section 5.7.6).
+#[test]
+fn f27_infeasible_positive_span_allocation() {
+    let grid = TickGrid::new(96).unwrap();
+    let weights = vec![Q::from(Z::from(1)); 3];
+    let policy = AllocationPolicy::default().with_minimum_ticks(1);
+
+    let outcome = grid
+        .allocate_preserving_endpoint(&weights, &Z::from(2), &policy)
+        .unwrap();
+    assert!(!outcome.is_feasible());
+    assert!(
+        outcome.allocation().is_none(),
+        "nothing is silently allocated"
+    );
+    match outcome {
+        AllocationOutcome::Infeasible {
+            reason:
+                AllocationInfeasibility::MinimumSpan {
+                    children,
+                    required_ticks,
+                    available_ticks,
+                },
+        } => {
+            assert_eq!(children, 3);
+            assert_eq!(required_ticks, Z::from(3));
+            assert_eq!(available_ticks, Z::from(2));
+        }
+        other => panic!("unexpected outcome {other:?}"),
+    }
+
+    // A collapse is possible only by selecting it explicitly, and it says
+    // which children collapsed.
+    let collapsed = grid
+        .allocate_preserving_endpoint(&weights, &Z::from(2), &policy.clone().allowing_collapse())
+        .unwrap()
+        .into_allocation()
+        .expect("the collapse was permitted");
+    assert!(!collapsed.collapsed().is_empty());
+    assert_eq!(collapsed.total_ticks(), Z::from(2));
+}
+
+/// F32 - reciprocal rate and duration orientation.
+///
+/// A declared ratio of 3/2 applied to a positive rate multiplies the rate by
+/// 3/2 while the reciprocal duration is multiplied by 2/3. An adapter that
+/// labels both changes as the same directed ratio without an orientation
+/// declaration fails conformance (UMT-3.2 section 2.1).
+#[test]
+fn f32_reciprocal_rate_and_duration_orientation() {
+    let three_halves = Q::new(Z::from(3), Z::from(2));
+    let two_thirds = Q::new(Z::from(2), Z::from(3));
+
+    let faster = OrientedRatio::new(three_halves.clone(), RatioOrientation::Rate).unwrap();
+    assert_eq!(faster.rate_factor(), three_halves);
+    assert_eq!(faster.duration_factor(), two_thirds);
+
+    // Applied to a rate: three halves as fast.
+    let tempo = BeatsPerSecond::new(2.0).unwrap();
+    assert!((faster.scale_rate(tempo).unwrap().get() - 3.0).abs() < 1e-12);
+
+    // Applied to the reciprocal quantity: two thirds as long, exactly.
+    let beat = BeatDuration::one();
+    assert_eq!(*faster.scale_duration(&beat).unwrap().get(), two_thirds);
+
+    // The same numeral declared on the other side means the opposite change,
+    // which is why a bare ratio is not accepted by either method.
+    let longer = OrientedRatio::new(three_halves.clone(), RatioOrientation::Duration).unwrap();
+    assert_ne!(faster, longer);
+    assert_eq!(*longer.scale_duration(&beat).unwrap().get(), three_halves);
+    assert_eq!(longer.rate_factor(), two_thirds);
+
+    // Re-expressing one orientation as the other is an involution that
+    // preserves the physical change.
+    let reoriented = faster.reoriented();
+    assert_eq!(reoriented.orientation(), RatioOrientation::Duration);
+    assert_eq!(*reoriented.ratio(), two_thirds);
+    assert_eq!(reoriented.rate_factor(), faster.rate_factor());
+    assert_eq!(reoriented.duration_factor(), faster.duration_factor());
+    assert_eq!(reoriented.reoriented(), faster);
 }
 
 /// Prompt section 13: mandatory equal-division cases.
