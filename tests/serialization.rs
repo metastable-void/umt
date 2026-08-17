@@ -15,9 +15,12 @@ use umt::proportion::{
     RealValuation,
 };
 use umt::realization::provenance::ProvenanceId;
+use umt::score::{
+    EventContent, EventId, EventScope, Score, ScoreEvent, ScoreRef, TemporalPlacement, Tie,
+};
 use umt::temperament::{AmbientLattice, TemperamentMap};
 use umt::time::{
-    BeatSpan, BeatTime, ClockTime, DifferenceConstraint, Meter, RhythmTree, Seconds,
+    BeatDuration, BeatSpan, BeatTime, ClockTime, DifferenceConstraint, Meter, RhythmTree, Seconds,
     SecondsPerBeat, TempoMap, TimeSignature, TimeSpan, TimeVarId,
 };
 use umt::{Q, Z};
@@ -299,5 +302,66 @@ fn time_layer_objects_round_trip_and_revalidate() {
     assert_eq!(
         serde_json::from_str::<DifferenceConstraint>(&json).unwrap(),
         constraint
+    );
+}
+
+#[test]
+fn score_objects_round_trip_and_revalidate() {
+    let steps = AmbientLattice::new("umt:edo:12", 1);
+    let context = TheoryContext::builder().ambient(&steps).unwrap().build();
+    let voice = EventScope::VoiceLocal(VoiceId::new("soprano"));
+    let pitch = PitchPoint::new(
+        PitchOrigin::new("umt:origin:c4"),
+        steps.element([7i64]).unwrap(),
+    );
+
+    let note = |id: &str, onset: i64| {
+        ScoreEvent::new(
+            EventId::new(id),
+            voice.clone(),
+            TemporalPlacement::fixed(
+                BeatTime::ratio(onset, 1).unwrap(),
+                BeatDuration::ratio(2, 1).unwrap(),
+            ),
+            EventContent::Note {
+                pitch: pitch.clone(),
+            },
+        )
+        .unwrap()
+    };
+
+    let score = Score::builder()
+        .event(note("n1", 2))
+        .unwrap()
+        .event(note("n2", 4))
+        .unwrap()
+        .tie(Tie::new(EventId::new("n1"), EventId::new("n2")))
+        .unwrap()
+        .build()
+        .unwrap();
+
+    // UMT-3.2 section 9.6: tie identities survive an L0 round trip.
+    let json = serde_json::to_string(&score.to_ref().unwrap()).unwrap();
+    assert!(json.contains("\"7\""), "coordinates stay exact: {json}");
+    let parsed: ScoreRef = serde_json::from_str(&json).unwrap();
+    let restored = parsed.resolve_ambient(&context).unwrap();
+    assert_eq!(restored, score);
+    assert_eq!(restored.ties(), score.ties());
+    assert_eq!(restored.len(), 2, "two noteheads, never merged");
+
+    // A tie naming an event that is not there is rejected on load, not
+    // accepted and tripped over later.
+    let forged = json.replace("\"n2\"}]", "\"ghost\"}]");
+    assert_ne!(forged, json, "the test data must actually have been edited");
+    // The score deserializes structurally, and the relation is then invalid;
+    // rebuilding through the builder is what revalidates it.
+    let broken: ScoreRef = serde_json::from_str(&forged).unwrap();
+    let rebuilt = ScoreRef::builder()
+        .event(broken.events().next().unwrap().clone())
+        .unwrap()
+        .tie(broken.ties()[0].clone());
+    assert!(
+        rebuilt.is_err(),
+        "a tie to an absent event cannot be rebuilt"
     );
 }

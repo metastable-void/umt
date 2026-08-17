@@ -378,6 +378,132 @@ pub enum TimeError {
     },
 }
 
+/// A score event, tie, or transformation was rejected.
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+#[non_exhaustive]
+pub enum ScoreError {
+    /// An event identity was used twice.
+    ///
+    /// Event identity is the score's index (UMT-3.2 section 6.2), so a repeat
+    /// is a defect rather than an update.
+    #[error("event `{event}` is already in this score")]
+    DuplicateEvent {
+        /// The repeated identity.
+        event: crate::score::id::EventId,
+    },
+
+    /// A reference named an event the score does not contain.
+    #[error("event `{event}` is not in this score")]
+    UnknownEvent {
+        /// The unresolved identity.
+        event: crate::score::id::EventId,
+    },
+
+    /// A note or rest was given a global scope.
+    ///
+    /// A rest is a notated event in a voice or staff context, not the global
+    /// set-theoretic complement of sounding intervals (UMT-3.2 section 5.2.4),
+    /// and a sounding event without any performing context is not a thing.
+    #[error("event `{event}` sounds or rests, so it needs a voice, staff, or part")]
+    SoundingEventWithoutContext {
+        /// The offending event.
+        event: crate::score::id::EventId,
+    },
+
+    /// A tie related an event to itself.
+    ///
+    /// A tie relates two *distinct* noteheads (UMT-3.2 section 5.2.2).
+    #[error("event `{event}` cannot be tied to itself")]
+    SelfTie {
+        /// The offending event.
+        event: crate::score::id::EventId,
+    },
+
+    /// A tie endpoint was not a notehead.
+    #[error("a tie relates two noteheads, and `{from}` or `{to}` is not one")]
+    TieBetweenNonNotes {
+        /// The earlier endpoint.
+        from: crate::score::id::EventId,
+        /// The later endpoint.
+        to: crate::score::id::EventId,
+    },
+
+    /// A tie crossed between different scopes.
+    #[error("`{from}` and `{to}` are in different scopes, so a tie between them is not a tie")]
+    TieAcrossScopes {
+        /// The earlier endpoint.
+        from: crate::score::id::EventId,
+        /// The later endpoint.
+        to: crate::score::id::EventId,
+    },
+
+    /// A tie related two different pitches.
+    ///
+    /// A relation between noteheads of different pitch is a slur or a
+    /// glissando; a tie continues one pitch.
+    #[error("`{from}` and `{to}` have different pitches, so a tie between them is not a tie")]
+    TiedPitchesDiffer {
+        /// The earlier endpoint.
+        from: crate::score::id::EventId,
+        /// The later endpoint.
+        to: crate::score::id::EventId,
+    },
+
+    /// A tie ran backwards or left a gap.
+    #[error("the tie from `{from}` to `{to}` does not continue it")]
+    MisorderedTie {
+        /// The earlier endpoint.
+        from: crate::score::id::EventId,
+        /// The later endpoint.
+        to: crate::score::id::EventId,
+    },
+
+    /// A grace event anchored to another grace event.
+    #[error("grace event `{event}` anchors to another grace event, so it has nothing to stand on")]
+    GraceAnchorIsGrace {
+        /// The offending event.
+        event: crate::score::id::EventId,
+    },
+
+    /// A constrained placement referred to a variable the network does not
+    /// declare.
+    #[error("temporal variable `{variable}` is not declared in this score's network")]
+    UndeclaredTemporalVariable {
+        /// The unresolved identifier.
+        variable: String,
+    },
+
+    /// A temporal scale factor was zero or negative.
+    ///
+    /// A non-positive scale reverses or collapses the timeline, which is not a
+    /// score transformation.
+    #[error("a temporal scale factor must be strictly positive")]
+    NonPositiveTimeScale,
+
+    /// A declared transformation component was asked to evaluate or compose.
+    ///
+    /// UMT-3.2 section 6.6 forbids claiming compositionality without the
+    /// operation, so the operation is absent exactly where the claim would be
+    /// unearned.
+    #[error("transformation component `{component}` is application-declared and does not compose")]
+    UncomposableTransform {
+        /// The declared component's name.
+        component: String,
+    },
+
+    /// An underlying structural-time operation failed.
+    #[error(transparent)]
+    Time(#[from] TimeError),
+
+    /// An underlying pitch operation failed.
+    #[error(transparent)]
+    Pitch(#[from] PitchError),
+
+    /// An underlying context resolution failed.
+    #[error(transparent)]
+    Context(#[from] ContextError),
+}
+
 /// A pitch quantity, point, or realization was rejected.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 #[non_exhaustive]

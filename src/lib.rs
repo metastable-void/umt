@@ -13,6 +13,7 @@ pub mod pitch;
 pub mod proportion;
 mod quantity;
 pub mod realization;
+pub mod score;
 pub mod temperament;
 pub mod time;
 

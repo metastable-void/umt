@@ -14,7 +14,7 @@ use std::sync::Arc;
 use umt::algebra::QuotientGroup;
 use umt::algebra::lattice::Sublattice;
 use umt::context::TheoryContext;
-use umt::error::{ComplexityError, PitchError, TemperamentError, TimeError};
+use umt::error::{ComplexityError, PitchError, ScoreError, TemperamentError, TimeError};
 use umt::pitch::{
     AdmissibleFamily, Cents, Chord, ChordDistance, CostQuestion, Deviation, FrequencyHz,
     Interpolation, LogFrequency, LogPitchDistance, MassProfile, MetricClaim, Octaves, PitchOrigin,
@@ -25,10 +25,14 @@ use umt::proportion::{
     Complexity, ComplexityProfile, LogWeightedL1, PositiveFinite, RealValuation, WeightedL1,
 };
 use umt::realization::optimization::{ApproximationGuarantee, OptimizationOutcome};
+use umt::score::{
+    EventContent, EventId, EventScope, Score, ScoreContext, ScoreEvent, ScoreRef,
+    TemporalPlacement, Tie,
+};
 use umt::temperament::{
-    AmbientLattice, EquivalenceDomain, HomomorphicSplit, KernelLattice, LinearSplit, OffsetPolicy,
-    RepresentativePolicy, SaturationPolicy, SplitPolicy, StructuralLens, TemperamentMap,
-    UnitEquivalence,
+    AmbientElem, AmbientLattice, EquivalenceDomain, HomomorphicSplit, KernelLattice, LinearSplit,
+    OffsetPolicy, RepresentativePolicy, SaturationPolicy, SplitPolicy, StructuralLens,
+    TemperamentMap, UnitEquivalence,
 };
 use umt::time::{
     AllocationInfeasibility, AllocationOutcome, AllocationPolicy, BeatDuration, BeatSpan, BeatTime,
@@ -971,6 +975,257 @@ fn f20_continuous_pitch() {
             );
         }
     }
+}
+
+/// Builds a 12-EDO pitch point for the score fixtures.
+fn score_pitch(steps: &Arc<AmbientLattice>, step: i64) -> PitchPoint<AmbientElem> {
+    PitchPoint::new(
+        PitchOrigin::new("umt:origin:c4"),
+        steps.element([step]).unwrap(),
+    )
+}
+
+/// F9 - tie round trip.
+///
+/// Two tied noteheads across a barline. Both L0 noteheads and the tie relation
+/// survive; a realization may contain one sustained sounding gesture; and
+/// exporting reconstructs the two noteheads and the tie
+/// (UMT-3.2 sections 5.2.2 and 9.6).
+#[test]
+fn f09_tie_round_trip() {
+    let steps = AmbientLattice::new("umt:edo:12", 1);
+    let context = TheoryContext::builder().ambient(&steps).unwrap().build();
+    let soprano = EventScope::VoiceLocal(VoiceId::new("soprano"));
+
+    // A 4/4 bar line at beat 4: two beats before it, two after, tied.
+    let before = ScoreEvent::new(
+        EventId::new("n1"),
+        soprano.clone(),
+        TemporalPlacement::fixed(
+            BeatTime::ratio(2, 1).unwrap(),
+            BeatDuration::ratio(2, 1).unwrap(),
+        ),
+        EventContent::Note {
+            pitch: score_pitch(&steps, 7),
+        },
+    )
+    .unwrap();
+    let after = ScoreEvent::new(
+        EventId::new("n2"),
+        soprano,
+        TemporalPlacement::fixed(
+            BeatTime::ratio(4, 1).unwrap(),
+            BeatDuration::ratio(2, 1).unwrap(),
+        ),
+        EventContent::Note {
+            pitch: score_pitch(&steps, 7),
+        },
+    )
+    .unwrap();
+
+    let score = Score::builder()
+        .event(before)
+        .unwrap()
+        .event(after)
+        .unwrap()
+        .tie(Tie::new(EventId::new("n1"), EventId::new("n2")))
+        .unwrap()
+        .context(ScoreContext {
+            meter: Some(Meter::simple(TimeSignature::new(4, 4).unwrap()).unwrap()),
+            ..ScoreContext::default()
+        })
+        .build()
+        .unwrap();
+
+    // 1. Two L0 noteheads and the tie relation survive. Nothing merged them.
+    assert_eq!(score.len(), 2);
+    assert_eq!(
+        score.ties(),
+        &[Tie::new(EventId::new("n1"), EventId::new("n2"))]
+    );
+    assert_eq!(
+        score
+            .event(&EventId::new("n1"))
+            .unwrap()
+            .span()
+            .unwrap()
+            .duration(),
+        Beats::ratio(2, 1).unwrap(),
+        "the first notehead still ends at the barline"
+    );
+
+    // 2. The realization may contain one sustained sounding gesture, and the
+    //    source events travel with it.
+    let gestures = score.sounding_gestures().unwrap();
+    assert_eq!(gestures.len(), 1);
+    assert!(gestures[0].is_tied());
+    assert_eq!(
+        gestures[0].sources(),
+        &[EventId::new("n1"), EventId::new("n2")]
+    );
+    assert_eq!(gestures[0].span().duration(), Beats::ratio(4, 1).unwrap());
+    assert_eq!(*gestures[0].span().start(), BeatTime::ratio(2, 1).unwrap());
+
+    // 3. Export and reimport reconstructs the two noteheads and the tie.
+    let wire = score.to_ref().unwrap();
+    let json = serde_json::to_string(&wire).unwrap();
+    let parsed: ScoreRef = serde_json::from_str(&json).unwrap();
+    let restored = parsed.resolve_ambient(&context).unwrap();
+
+    assert_eq!(restored, score);
+    assert_eq!(restored.len(), 2, "two noteheads, not one merged note");
+    assert_eq!(restored.ties().len(), 1);
+    assert_eq!(
+        restored.sounding_gestures().unwrap()[0].sources(),
+        &[EventId::new("n1"), EventId::new("n2")]
+    );
+}
+
+/// F23 - unmeasured event without a fixed onset.
+///
+/// A notated event whose onset is a temporal variable constrained only to
+/// occur after another event is a valid score object, and no rational
+/// structural onset is fabricated for it (UMT-3.2 section 5.10.5).
+#[test]
+fn f23_unmeasured_event_without_fixed_onset() {
+    let steps = AmbientLattice::new("umt:edo:12", 1);
+    let soprano = EventScope::VoiceLocal(VoiceId::new("soprano"));
+
+    // The network says only "after the cue", with no upper bound.
+    let mut network = StpProblem::new();
+    let cue = network.variable("cue");
+    let entry = network.variable("entry");
+    network
+        .constrain(DifferenceConstraint::at_least(
+            &cue,
+            &entry,
+            Q::from(Z::from(0)),
+        ))
+        .unwrap();
+
+    let measured = ScoreEvent::new(
+        EventId::new("cue-note"),
+        soprano.clone(),
+        TemporalPlacement::fixed(BeatTime::zero(), BeatDuration::one()),
+        EventContent::Note {
+            pitch: score_pitch(&steps, 0),
+        },
+    )
+    .unwrap();
+    let unmeasured = ScoreEvent::new(
+        EventId::new("free-entry"),
+        soprano,
+        TemporalPlacement::ConstraintPlacement {
+            onset: entry.clone(),
+            offset: None,
+        },
+        EventContent::Note {
+            pitch: score_pitch(&steps, 7),
+        },
+    )
+    .unwrap();
+
+    let score = Score::builder()
+        .event(measured)
+        .unwrap()
+        .event(unmeasured)
+        .unwrap()
+        .context(ScoreContext {
+            temporal: Some(network),
+            ..ScoreContext::default()
+        })
+        .build()
+        .unwrap();
+
+    // The score is valid and the event is present.
+    assert_eq!(score.len(), 2);
+    let free = score.event(&EventId::new("free-entry")).unwrap();
+
+    // And it has no structural onset. None was invented.
+    assert_eq!(free.placement().onset(), None);
+    assert_eq!(free.span(), None);
+    assert!(free.placement().is_constrained());
+    assert!(!free.placement().is_fixed());
+    assert_eq!(score.unmeasured_events().count(), 1);
+
+    // The placement names its variable, and the network decides what it can.
+    assert_eq!(free.placement().variables(), [&entry]);
+    let outcome = score.context().temporal.as_ref().unwrap().solve();
+    assert!(outcome.is_consistent());
+    let assignment = outcome.assignment().unwrap();
+    assert!(
+        assignment[&entry] >= assignment[&cue],
+        "the only thing declared is the ordering, and it holds"
+    );
+
+    // It is not a sounding gesture either, because it has no span yet.
+    assert_eq!(score.sounding_gestures().unwrap().len(), 1);
+}
+
+/// F24 - global control event without a voice.
+///
+/// A global tempo or control marker is a valid event scope with no fabricated
+/// voice identity (UMT-3.2 section 6.2, prompt section 24).
+#[test]
+fn f24_global_control_event_without_voice() {
+    let steps = AmbientLattice::new("umt:edo:12", 1);
+    let marker = ScoreEvent::new(
+        EventId::new("tempo-1"),
+        EventScope::Global,
+        TemporalPlacement::fixed(BeatTime::zero(), BeatDuration::one()),
+        EventContent::Control {
+            declared_type: String::from("umt:control:tempo"),
+            value: String::from("quarter = 120"),
+        },
+    )
+    .unwrap();
+
+    // Global scope, and no voice to be had.
+    assert!(marker.scope().is_global());
+    assert_eq!(marker.scope().voice(), None);
+    assert!(!marker.scope().is_local());
+
+    let score = Score::builder()
+        .event(marker)
+        .unwrap()
+        .event(
+            ScoreEvent::new(
+                EventId::new("n1"),
+                EventScope::VoiceLocal(VoiceId::new("soprano")),
+                TemporalPlacement::fixed(BeatTime::zero(), BeatDuration::one()),
+                EventContent::Note {
+                    pitch: score_pitch(&steps, 0),
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+    assert_eq!(score.len(), 2);
+
+    // A voice-local event necessarily carries its voice, and the global one
+    // has no field that could hold a fake.
+    let voiced = score.event(&EventId::new("n1")).unwrap();
+    assert_eq!(voiced.scope().voice(), Some(&VoiceId::new("soprano")));
+    assert_eq!(
+        score.voice_events(&VoiceId::new("soprano")).count(),
+        1,
+        "the global marker belongs to no voice"
+    );
+
+    // Conversely, a sounding event or a rest cannot be global at all: a rest
+    // is a notated event in a context, not the complement of sound
+    // (UMT-3.2 section 5.2.4).
+    assert!(matches!(
+        ScoreEvent::<PitchPoint<AmbientElem>>::new(
+            EventId::new("r1"),
+            EventScope::Global,
+            TemporalPlacement::fixed(BeatTime::zero(), BeatDuration::one()),
+            EventContent::Rest,
+        ),
+        Err(ScoreError::SoundingEventWithoutContext { .. })
+    ));
 }
 
 /// F10 - 6/8 versus 3/4.

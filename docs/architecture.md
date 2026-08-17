@@ -8,9 +8,9 @@ convenience.
 
 | UMT layer | Content | Modules |
 |---|---|---|
-| L0 notation | spelled symbols, ties, tuplet brackets | not implemented |
-| L1 exact structure | monzos, exact ratios, rational durations | `algebra`, `proportion` |
-| L2 structural quotient | tempered classes, image lattices, meter | `temperament`, `pitch::{chord, voice_leading}` |
+| L0 notation | spelled symbols, ties, tuplet brackets | `score` (ties and event structure); spelling deferred |
+| L1 exact structure | monzos, exact ratios, rational durations | `algebra`, `proportion`, `time::beat` |
+| L2 structural quotient | tempered classes, image lattices, meter | `temperament`, `pitch::{chord, voice_leading}`, `time::{rhythm, meter}` |
 | L3 metric realization | log-frequency, tuning curves, tempo maps | `pitch::{units, tuning, trajectory}`, `time`, `realization` |
 | L4 device realization | ticks, MIDI, control words | `pitch::trajectory::SampledTrajectory` only |
 
@@ -42,6 +42,11 @@ src/
     chord.rs              VoiceId, VoiceSet, Chord, PitchMultiset, annotations
     voice_leading.rs      VoiceLeading span, span cost, chord distance profiles
     trajectory.rs         Deviation, PitchTrajectory, sampling and its record
+  score/
+    id.rs                 EventId, StaffId, PartId, EventScope
+    event.rs              TemporalPlacement, EventContent, ScoreEvent
+    container.rs          Score, ScoreBuilder, ties, gestures, projections
+    transform.rs          EventRelation, ScoreTransform and its composition
   time/
     units.rs              ClockTime, Seconds - the physical timeline
     span.rs               TimeSpan, the closed domain [t0, t1]
@@ -79,14 +84,11 @@ the general machinery that are meaningful only because the ambient rank is 1;
 
 Following the staging of the implementation prompt, in order:
 
-1. `score/` - scoped events, temporal placement, ties, event relations (F9,
-   F23, F24). The event-indexed object of part VI, which is what turns the
-   pitch and time layers into a score rather than two marginal aggregates.
-2. The rest of `realization/` - residual taxonomy, realization records, the
+1. The rest of `realization/` - residual taxonomy, realization records, the
    compiled performance-plan boundary.
-3. The native container in `io/` (F29), then external adapters (F19, F21),
+2. The native container in `io/` (F29), then external adapters (F19, F21),
    which also bring the empirical L3 scale of section 4.9.
-4. Generated structures (part III, F35), which are independent of the rest.
+3. Generated structures (part III, F35), which are independent of the rest.
 
 Deliberately deferred: pitch notation at L0 (section 4.5), because prompt
 section 55 says not to overbuild notation in v1.
@@ -202,3 +204,20 @@ Not yet documented, because nothing here makes a realtime claim. The semantic
 core allocates and uses arbitrary-precision arithmetic by design. `docs/realtime.md`
 arrives with the compiled performance-plan boundary; until then, no type in
 this crate is realtime-safe and none claims to be.
+
+## Why the score is generic over its pitch attachment
+
+`Score<P>` is parameterized by what hangs off a note, not by an interval group.
+In memory `P` is a `PitchPoint<E>`; on the wire it is a `PitchPointRef`, which
+names a lattice and coordinates and resolves against a `TheoryContext`.
+`Score::try_map_pitch` moves between the two.
+
+The alternative was a parallel `RawScore`/`RawEvent`/`RawContent` hierarchy
+duplicating every field. This way the placement, scope, tie, and transformation
+types exist once, and the only thing that differs between an authored score and
+a document is the one field that genuinely differs.
+
+It also states something true: what a note carries is a parameter of the score,
+not a fixed choice. A score of 5-limit monzos and a score of 12-EDO steps are
+different types, which is the same discipline `Monzo` and `Chord` already
+apply.

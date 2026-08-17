@@ -24,7 +24,7 @@ Status values:
 | F6 | Nonhomomorphic representative policy | pass | `tests/conformance.rs::f06_nonhomomorphic_representative_policy` |
 | F7 | Enharmonic spelling | pass | `tests/conformance.rs::f07_enharmonic_spelling` |
 | F8 | Unequal voice count | pass | `tests/conformance.rs::f08_unequal_voice_count` |
-| F9 | Tie round trip | pending | needs the score layer |
+| F9 | Tie round trip | pass | `tests/conformance.rs::f09_tie_round_trip` |
 | F10 | 6/8 versus 3/4 | pass | `tests/conformance.rs::f10_six_eight_versus_three_four` |
 | F11 | Additive 2+2+3 | pass | `tests/conformance.rs::f11_additive_two_two_three` |
 | F12 | Naive quintuplet floor gives 95 | pass | `tests/conformance.rs::f12_naive_quintuplet_floor` |
@@ -38,8 +38,8 @@ Status values:
 | F20 | Continuous pitch trajectory | pass | `tests/conformance.rs::f20_continuous_pitch` |
 | F21 | Scala mixed exact and metric entries | pending | needs the `.scl` adapter |
 | F22 | Reachable versus ambient octave classes | pass | `tests/conformance.rs::f22_reachable_versus_ambient_classes` |
-| F23 | Unmeasured event without fixed onset | pending | needs the score layer |
-| F24 | Global control event without a voice | pending | needs the score layer |
+| F23 | Unmeasured event without fixed onset | pass | `tests/conformance.rs::f23_unmeasured_event_without_fixed_onset` |
+| F24 | Global control event without a voice | pass | `tests/conformance.rs::f24_global_control_event_without_voice` |
 | F25 | Strict ratio positivity, no invented delta | pass | `tests/conformance.rs::f25_strict_ratio_positivity` |
 | F26 | Unattained optimization infimum | pass | `tests/conformance.rs::f26_unattained_optimization_infimum` |
 | F27 | Infeasible positive-span device allocation | pass | `tests/conformance.rs::f27_infeasible_positive_span_allocation` |
@@ -52,12 +52,12 @@ Status values:
 | F34 | Group length versus lattice norm | pass | `tests/conformance.rs::f34_group_length_versus_lattice_norm` |
 | F35 | Three-note quarter-comma-meantone MOS | pending | needs generated sets |
 
-Twenty-seven of the thirty-five fixtures pass; none is partial. Every remaining
-one depends on a layer that does not exist yet - the score layer, the device
-layer, the native container, an external adapter, or generated sets - except
-F30, which is a lint over the specification source rather than a library test.
+Thirty of the thirty-five fixtures pass; none is partial. Of the five
+remaining, F19 and F21 need the empirical L3 scale object and the `.scl`
+adapter, F29 needs the native container, F35 needs generated sets, and F30 is a
+lint over the specification source rather than a library test.
 
-Two of them are worth naming, because both are easy to claim loosely.
+Three of them are worth naming, because all three are easy to claim loosely.
 
 F20's obligations are discharged in full: the trajectory survives a native
 round trip through `PitchTrajectoryRef` *exactly*, not to within a tolerance,
@@ -71,6 +71,12 @@ the rationals, so there is no point at which a `delta` would be convenient. One
 can still be declared - but `PositivityHandling::JustifiedDelta` has a
 mandatory `justification` field, so a `delta` with no stated justification is
 not a value this crate can represent.
+
+F9 checks all three of its obligations separately, because passing two of them
+would be easy. The two noteheads and the tie relation survive in the score;
+`Score::sounding_gestures` produces one sustained gesture *and* keeps both
+source identities inside it; and a native round trip reconstructs a score equal
+to the original, with two events rather than one merged note.
 
 ## Law coverage
 
@@ -109,6 +115,9 @@ UMT-3.2 section 9.1 and prompt section 47 laws currently exercised, in
 | Section 9.10 STP profile | `a_consistent_stp_assignment_satisfies_every_constraint` |
 | Section 9.10 linear-ratio profile | `a_feasible_linear_system_yields_a_satisfying_assignment` |
 | Section 2.1 rate and duration orientation | `an_oriented_ratio_inverts_across_the_reciprocal` |
+| Section 5.2.2 tie relations | `a_tie_chain_yields_one_gesture_and_loses_no_notehead` |
+| Section 6.6 transformation composition | `score_transformations_compose_associatively`, `composed_time_transformations_agree_with_applying_them_in_turn` |
+| Section 9.6 tie identities survive a round trip | `tests/serialization.rs::score_objects_round_trip_and_revalidate` |
 
 P8 to P11 run against four mapping shapes - surjective, non-surjective, the
 zero map, and rank 2 - so the degenerate cases are covered rather than assumed
@@ -150,8 +159,18 @@ else, and `RatioConstraint` cross-multiplies into `LinearConstraint`, which
 `StpProblem` has no method for. The separation is in the types, not in a
 runtime check that could be bypassed.
 
-The notation and generated-structure laws are not yet applicable: the
-structures they constrain do not exist.
+Section 6.6 gets the same treatment as 9.5, and for the same reason. It
+forbids the label "functorial" without identity transformations, composition
+of event relations, composition of pitch components, composition of temporal
+components, and a rule for composing provenance. `ScoreTransform` has all five
+- and `ScoreTransform::compose` returns `None`, rather than a plausible
+answer, exactly when a component is application-declared and therefore does not
+compose. `claims_compositional` reports which case a given transformation is
+in.
+
+The remaining notation laws of section 9.6 and the generated-structure laws of
+section 9.11 are not yet applicable: L0 spelling is deliberately deferred by
+prompt section 55, and generated sets are a later stage.
 
 ## Examples
 

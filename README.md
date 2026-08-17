@@ -7,9 +7,9 @@ choice made explicit.
 
 ## Status
 
-The exact structural core, the pitch layer, and the time layer are built. What
-remains is the score layer, the device boundary, the native container, and the
-external adapters.
+The exact structural core, the pitch layer, the time layer, and the score layer
+are built. What remains is the device boundary, the native container, the
+external adapters, and generated sets.
 
 Implemented: the proportion lattice; exact integer matrices with Smith and
 canonical Hermite normal forms; free lattices and quotients; regular
@@ -23,14 +23,16 @@ with declared costs and honestly-scoped distance claims; continuous pitch
 trajectories with derived sampling bounds; exact structural time with rhythm
 trees, meter, and grouping; the rate/duration orientation rule; grid
 quantization that returns its residuals; tempo maps in the homeomorphism
-profile; three separate temporal-constraint solver profiles; and an immutable
-theory context with reference-based serialization.
+profile; three separate temporal-constraint solver profiles; an event-indexed
+score with scoped events, ties that are relations rather than merges, and
+transformations that claim compositionality only when they have it; and an
+immutable theory context with reference-based serialization.
 
-**Twenty-seven of the thirty-five UMT-3.2 fixtures pass.** Every remaining one
-depends on a layer that is not built yet - score, device, the native container,
-external adapters, or generated sets - except F30, which lints the
-specification source rather than the library. See `docs/architecture.md` for
-the staging plan and `docs/conformance.md` for the fixture matrix.
+**Thirty of the thirty-five UMT-3.2 fixtures pass.** Of the five remaining, two
+need the empirical L3 scale and the `.scl` adapter, one needs the native
+container, one needs generated sets, and one lints the specification source
+rather than the library. See `docs/architecture.md` for the staging plan and
+`docs/conformance.md` for the fixture matrix.
 
 This crate does not yet claim UMT-3.2 conformance. Conformance is claimed only
 when the applicable mandatory fixture suite passes.
@@ -193,6 +195,50 @@ let exact = grid
     .expect("feasible");
 assert_eq!(exact.child_ticks(), [19, 19, 20, 19, 19].map(Z::from));
 assert!(exact.endpoint_preserved());
+# Ok::<(), Box<dyn core::error::Error>>(())
+```
+
+A tie is a relation between two noteheads, not a merge. Both survive, and the
+single sustained gesture is a derived view that keeps their identities
+(fixture F9):
+
+```rust
+use umt::pitch::{PitchOrigin, PitchPoint, VoiceId};
+use umt::score::{
+    EventContent, EventId, EventScope, Score, ScoreEvent, TemporalPlacement, Tie,
+};
+use umt::temperament::AmbientLattice;
+use umt::time::{BeatDuration, BeatTime, Beats};
+
+let steps = AmbientLattice::new("umt:edo:12", 1);
+let soprano = EventScope::VoiceLocal(VoiceId::new("soprano"));
+let g4 = PitchPoint::new(PitchOrigin::new("umt:origin:c4"), steps.element([7i64])?);
+
+let notehead = |id: &str, onset: i64| {
+    ScoreEvent::new(
+        EventId::new(id),
+        soprano.clone(),
+        TemporalPlacement::fixed(BeatTime::ratio(onset, 1)?, BeatDuration::ratio(2, 1)?),
+        EventContent::Note { pitch: g4.clone() },
+    )
+};
+
+// Two beats before the barline, two after, tied across it.
+let score = Score::builder()
+    .event(notehead("n1", 2)?)?
+    .event(notehead("n2", 4)?)?
+    .tie(Tie::new(EventId::new("n1"), EventId::new("n2")))?
+    .build()?;
+
+// Both noteheads survive at L0.
+assert_eq!(score.len(), 2);
+assert_eq!(score.ties().len(), 1);
+
+// And the realization view is one four-beat gesture that remembers both.
+let gestures = score.sounding_gestures()?;
+assert_eq!(gestures.len(), 1);
+assert_eq!(gestures[0].sources(), &[EventId::new("n1"), EventId::new("n2")]);
+assert_eq!(gestures[0].span().duration(), Beats::ratio(4, 1)?);
 # Ok::<(), Box<dyn core::error::Error>>(())
 ```
 

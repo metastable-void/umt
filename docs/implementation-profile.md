@@ -470,7 +470,59 @@ whatever the weights.
 `allocate_locally` exists alongside it precisely so the failure mode of
 section 5.7.4 can be demonstrated rather than described.
 
-## D33. `divisions = 0` is a legal mapping
+## D33. A tie relates two noteheads of one pitch, in one scope **binding**
+
+`ScoreBuilder::tie` rejects a tie to itself, to a non-note, across scopes, or
+between different pitches. The last is the debatable one, and it is deliberate:
+a relation between noteheads of *different* pitch is a slur or a glissando, and
+calling it a tie would make `Score::sounding_gestures` produce a sustained tone
+at a pitch neither notehead has.
+
+Nothing is merged by any of this. UMT-3.2 section 5.2.2 forbids merging tied
+noteheads at L0, so the tie is a relation stored beside the events, and the
+single sustained gesture is a *derived view* that keeps both source identities
+inside it.
+
+## D34. The score is generic over its pitch attachment **binding**
+
+`Score<P>` is parameterized by what a note carries, so the in-memory score
+(`P = PitchPoint<E>`) and its wire form (`P = PitchPointRef`) are the same
+types with one field substituted, rather than two parallel hierarchies.
+`Score::try_map_pitch` converts.
+
+## D35. `sounding_gestures` requires a contiguous tie chain
+
+A tie whose second notehead does not begin exactly where the first ends is
+reported as `MisorderedTie` rather than being smoothed over. A gap or an
+overlap between tied noteheads is a defect in the source, and the combined span
+would otherwise silently include time neither notehead occupies.
+
+Events without a fixed span - constrained and grace placements - are skipped by
+this view rather than being given one, and are listed by
+`Score::unmeasured_events`.
+
+## D36. Compositionality is a value, not a label
+
+`ScoreTransform::claims_compositional` reports whether every component
+composes, and `ScoreTransform::compose` returns `None` rather than a plausible
+answer when one does not. UMT-3.2 section 6.6 forbids the label "functorial"
+without identity, composition of relations, of pitch components, of temporal
+components, and a provenance rule; all five exist, and the operation is absent
+exactly where the label would be unearned.
+
+The temporal component is the affine family `t -> a t + b` with `a > 0`,
+because that family is closed under composition. Anything outside it is
+`TimeTransform::Declared`, which is perfectly usable and simply makes no
+compositional claim.
+
+## D37. Provenance composes by concatenation
+
+`ProvenanceChain::then` appends rather than replaces. Section 9.12 requires a
+later re-realization to be able to consult the original source rather than
+compound previous rounding, which is only possible if the earlier steps
+survive.
+
+## D38. `divisions = 0` is a legal mapping
 
 The zero mapping has image `{0}`, which section 1.6 fixes through the
 convention `gcd(0, ..., 0) = 0`. In the general API its image has rank 0 and
@@ -478,7 +530,7 @@ an image element has an empty coordinate vector, which is the correct answer.
 Only the rank-one scalar convenience API of `PatentVal` has nothing to return,
 and it reports `TrivialImage` rather than pretending the answer is zero.
 
-## D34. Rank-0 bases are permitted
+## D39. Rank-0 bases are permitted
 
 A basis with no generators spans the trivial lattice. Nothing breaks, and
 rejecting it would be an invented restriction.

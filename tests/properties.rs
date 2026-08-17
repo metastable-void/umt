@@ -15,6 +15,11 @@ use umt::pitch::{
     MetricClaim, Octaves, PitchOrigin, PitchPoint, RegularTuning, SpanCostModel, SpanPenalties,
     TransportProfile, VoiceId, VoiceLeading, VoiceSet,
 };
+use umt::realization::provenance::ProvenanceId;
+use umt::score::{
+    EventContent, EventId, EventRelation, EventScope, PitchTransform, ProvenanceChain, Score,
+    ScoreEvent, ScoreTransform, TemporalPlacement, Tie, TimeTransform,
+};
 use umt::temperament::{
     AmbientElem, AmbientLattice, HomomorphicSplit, KernelElem, LinearSplit, OffsetPolicy,
     RepresentativePolicy, SplitPolicy, StructuralLens, TemperamentMap,
@@ -1032,6 +1037,136 @@ proptest! {
         let stretched = as_rate.scale_duration(&beat).unwrap();
         let restored = as_duration.scale_duration(&stretched).unwrap();
         prop_assert_eq!(restored, beat);
+    }
+
+    /// UMT-3.2 section 6.6: composition of score transformations is
+    /// associative and the identity transformation is neutral, which are two
+    /// of the five obligations a compositional claim carries.
+    #[test]
+    fn score_transformations_compose_associatively(
+        shifts in prop::collection::vec((-8i64..=8, 1i64..=4), 3),
+    ) {
+        let make = |(shift, scale): (i64, i64), tag: &str| -> ScoreTransform<i64> {
+            ScoreTransform::new(
+                EventRelation::identity([&EventId::new("a")]),
+                PitchTransform::Transpose(shift),
+                TimeTransform::Affine {
+                    scale: Q::from(Z::from(scale)),
+                    shift: Beats::ratio(shift, 1).unwrap(),
+                },
+                ProvenanceChain::of(ProvenanceId::new(tag)),
+            )
+        };
+        let f = make(shifts[0], "p1");
+        let g = make(shifts[1], "p2");
+        let h = make(shifts[2], "p3");
+        let add = |left: &i64, right: &i64| Ok(left + right);
+
+        prop_assert!(f.claims_compositional());
+        let left = f
+            .compose(&g, add)
+            .unwrap()
+            .unwrap()
+            .compose(&h, add)
+            .unwrap()
+            .unwrap();
+        let right = f
+            .compose(&g.compose(&h, add).unwrap().unwrap(), add)
+            .unwrap()
+            .unwrap();
+        prop_assert_eq!(&left, &right);
+
+        // Identity is neutral on both sides.
+        let identity: ScoreTransform<i64> = ScoreTransform::identity([&EventId::new("a")]);
+        prop_assert_eq!(identity.compose(&f, add).unwrap().unwrap(), f.clone());
+        prop_assert_eq!(f.compose(&identity, add).unwrap().unwrap(), f);
+
+        // Provenance composes by concatenation, oldest first.
+        prop_assert_eq!(left.provenance().steps().len(), 3);
+        prop_assert_eq!(&left.provenance().steps()[0], &ProvenanceId::new("p1"));
+    }
+
+    /// UMT-3.2 section 6.6: an affine temporal composite agrees with applying
+    /// its two parts in order.
+    #[test]
+    fn composed_time_transformations_agree_with_applying_them_in_turn(
+        first_scale in 1i64..=6,
+        first_shift in -6i64..=6,
+        second_scale in 1i64..=6,
+        second_shift in -6i64..=6,
+        at in -12i64..=12,
+    ) {
+        let first = TimeTransform::Affine {
+            scale: Q::from(Z::from(first_scale)),
+            shift: Beats::ratio(first_shift, 1).unwrap(),
+        };
+        let second = TimeTransform::Affine {
+            scale: Q::from(Z::from(second_scale)),
+            shift: Beats::ratio(second_shift, 1).unwrap(),
+        };
+        let composite = first.compose(&second).unwrap();
+
+        let position = BeatTime::ratio(at, 1).unwrap();
+        prop_assert_eq!(
+            composite.apply(&position).unwrap(),
+            second.apply(&first.apply(&position).unwrap()).unwrap()
+        );
+    }
+
+    /// UMT-3.2 sections 5.2.2 and 5.2.3: a tie chain becomes exactly one
+    /// gesture whose span is the sum of its noteheads, and every notehead
+    /// survives in the score.
+    #[test]
+    fn a_tie_chain_yields_one_gesture_and_loses_no_notehead(
+        durations in prop::collection::vec(1i64..=4, 1..=5),
+    ) {
+        let steps = twelve_edo();
+        let voice = EventScope::VoiceLocal(VoiceId::new("soprano"));
+        let pitch = PitchPoint::new(
+            PitchOrigin::new("umt:origin:c4"),
+            steps.element([7i64]).unwrap(),
+        );
+
+        let mut builder = Score::builder();
+        let mut onset = 0i64;
+        let mut ids = Vec::new();
+        for (index, duration) in durations.iter().enumerate() {
+            let id = EventId::new(&format!("n{index}"));
+            builder = builder
+                .event(
+                    ScoreEvent::new(
+                        id.clone(),
+                        voice.clone(),
+                        TemporalPlacement::fixed(
+                            BeatTime::ratio(onset, 1).unwrap(),
+                            BeatDuration::ratio(*duration, 1).unwrap(),
+                        ),
+                        EventContent::Note { pitch: pitch.clone() },
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+            onset += duration;
+            ids.push(id);
+        }
+        for pair in ids.windows(2) {
+            builder = builder.tie(Tie::new(pair[0].clone(), pair[1].clone())).unwrap();
+        }
+        let score = builder.build().unwrap();
+
+        // Every notehead survives, distinct.
+        prop_assert_eq!(score.len(), durations.len());
+        prop_assert_eq!(score.ties().len(), durations.len() - 1);
+
+        // And the chain is exactly one gesture, spanning the whole.
+        let gestures = score.sounding_gestures().unwrap();
+        prop_assert_eq!(gestures.len(), 1);
+        prop_assert_eq!(gestures[0].sources().len(), durations.len());
+        prop_assert_eq!(
+            gestures[0].span().duration(),
+            Beats::ratio(durations.iter().sum::<i64>(), 1).unwrap()
+        );
+        prop_assert_eq!(gestures[0].is_tied(), durations.len() > 1);
     }
 
     /// Prompt section 10: the Smith normal form reconstructs its input, its
