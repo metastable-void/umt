@@ -14,6 +14,9 @@
 //! - a rational always carries an explicit denominator, so `"3"` and `"3/1"`
 //!   both parse but only `"3/1"` is written.
 
+pub mod document;
+#[cfg(feature = "scala")]
+pub mod scala;
 pub mod text;
 pub mod version;
 

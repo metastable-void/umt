@@ -26,6 +26,11 @@ std = [
     "serde?/std",
 ]
 
+# The Scala `.scl` adapter of UMT-3.2 section 8.2. Pure text handling, so it
+# adds no dependency; it is a feature because prompt section 40 asks external
+# adapters to be optional and not to become a core dependency.
+scala = []
+
 # Native serialization support. See `docs/implementation-profile.md`: exact
 # integers and rationals are encoded as canonical decimal strings, never as
 # floating point, and never via a dependency's internal digit representation.

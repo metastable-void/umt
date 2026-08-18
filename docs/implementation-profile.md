@@ -602,6 +602,59 @@ and it reports `TrivialImage` rather than pretending the answer is zero.
 A basis with no generators spans the trivial lattice. Nothing breaks, and
 rejecting it would be an invented restriction.
 
+## D47. An empirical scale needs no basis, no unit, and no fit **binding**
+
+`EmpiricalScale` has no basis field, its `period` is `Option`, and its `fit` is
+`Option`. Section 4.9.1 makes a direct empirical scale "the minimum adequate
+representation for tunings whose cultural or acoustic basis is not established
+by a small-integer model", so requiring any of the three would force a claim
+the measurements do not support.
+
+When a fit *is* supplied, `FitDeclaration` has six mandatory fields - one for
+each thing section 4.9.3 says an inference MUST declare - and `LatticeFit`
+requires one empirical-fit residual per degree. A fit that covers fewer degrees
+is rejected rather than accepted as partial.
+
+This crate infers no lattice on its own. Section 4.9.3 warns that "there is no
+canonical instruction to take a maximally independent subset of local minima",
+and an inference this crate performed would have to declare a candidate-
+selection procedure nobody asked for.
+
+## D48. Container sections are optional and their absence is literal **binding**
+
+Every domain section of `UmtDocument` is optional, as section 8.8 requires, and
+an absent section is omitted from the encoding entirely rather than written as
+a null. A null would assert that the section exists and is empty, which is a
+different statement.
+
+The one enforced cross-section rule is the converse: a `unit` without a `basis`
+is refused, since a monzo's coordinates are meaningless without the basis they
+are over.
+
+## D49. Profiles carry the semantic-compatibility question **binding**
+
+`UmtSchemaVersion` governs whether this build can read the *encoding*;
+`UmtDocument::profiles` governs whether it understands the *semantics*. They
+are separate fields because they are separate questions, and a document can be
+perfectly readable while declaring semantics this build does not implement.
+
+`unsupported_profiles()` names them and `is_fully_understood()` reports the
+verdict. Neither is an error: prompt section 39 asks for unknown extensions to
+be allowed "without silently treating them as understood", and reporting is how
+that is done.
+
+## D50. A `.scl` entry keeps its layer **binding**
+
+`ScalaEntry` is an enum with `Ratio` and `Cents` variants, because section 8.2
+says an `.scl` file "is not uniformly `L3 only`" and requires an importer to
+retain which each entry was. `exact_ratio()` returns `None` for a cents entry:
+turning a decimal into a rational would fabricate exactness the file never
+claimed.
+
+Flattening to a uniform L3 scale is available through `to_empirical_scale`, and
+it returns a `ResidualSet` with one notation residual per exact entry it
+flattened. The loss is reported, which is law 2 of section 9.12.
+
 ## Known limitations
 
 - A generator cannot currently carry both an exact rational valuation and a
@@ -614,13 +667,18 @@ rejecting it would be an invented restriction.
   does not verify one. Verification is out of scope until there is a
   certificate format to verify against; the contract is declared metadata, as
   section 1.1.2 requires, and is never inferred.
-- The native container of UMT-3.2 section 8.8 does not exist yet: the pieces it
-  will assemble - the schema version, the exact text codec, the reference
-  forms, the provenance arena - are in place, but nothing writes a whole
-  document.
+- The native container writes and reads every section this crate models, but
+  the `events` section carries a `ScoreRef` whose pitches resolve only against
+  an ambient lattice. A score over 5-limit monzos has no wire form yet.
 - `TheoryContext` registers bases, ambient lattices, and mappings. Named
   representative policies, tunings, and notation systems join it as those
   layers arrive.
+- The Scala adapter reads and writes `.scl` only. Keyboard mappings (`.kbm`,
+  section 8.3) are a separate object the format keeps separate, and are not
+  implemented.
+- Part III generated structures - modular generated sets, three-gap behaviour,
+  MOS profiles, Euclidean rhythms - are the one remaining unimplemented part of
+  the specification.
 - Smith normal form uses the textbook pivot-and-reduce algorithm, whose
   intermediate entries can grow well beyond the input size. Exactness is never
   at risk, since every entry is a `Z`, but a modular or fraction-free variant

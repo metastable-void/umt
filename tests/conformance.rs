@@ -13,36 +13,59 @@ use std::sync::Arc;
 
 use umt::algebra::QuotientGroup;
 use umt::algebra::lattice::Sublattice;
-use umt::context::TheoryContext;
 use umt::error::{ComplexityError, PitchError, ScoreError, TemperamentError, TimeError};
 use umt::pitch::{
-    AdmissibleFamily, Cents, Chord, ChordDistance, CostQuestion, Deviation, FrequencyHz,
-    Interpolation, LogFrequency, LogPitchDistance, MassProfile, MetricClaim, Octaves, PitchOrigin,
-    PitchPoint, PitchRealization, PitchRealizer, PitchTrajectory, PitchTrajectoryRef,
-    RegularTuning, SpanCostModel, SpanPenalties, TransportProfile, VoiceId,
+    AdmissibleFamily, Cents, Chord, ChordDistance, CostQuestion, EmpiricalDegree, EmpiricalScale,
+    FitDeclaration, FrequencyHz, IndependenceClaim, LatticeFit, LogFrequency, LogPitchDistance,
+    MassProfile, MetricClaim, Octaves, PitchOrigin, PitchPoint, PitchRealization, PitchRealizer,
+    RegularTuning, ScaleId, SpanCostModel, SpanPenalties, TransportProfile, VoiceId,
 };
+
+// Fixtures F9, F20, and F29 have obligations that are specifically about the
+// native encoding, so they and their imports live behind the `serde` feature.
+#[cfg(feature = "serde")]
+use umt::context::{MonzoRef, TheoryContext};
+#[cfg(feature = "serde")]
+use umt::error::IoError;
+#[cfg(feature = "serde")]
+use umt::io::document::UmtDocument;
+#[cfg(feature = "serde")]
+use umt::pitch::{Deviation, Interpolation, PitchTrajectory, PitchTrajectoryRef};
 use umt::proportion::{
     Complexity, ComplexityProfile, LogWeightedL1, PositiveFinite, RealValuation, WeightedL1,
 };
-use umt::realization::optimization::{ApproximationGuarantee, OptimizationOutcome};
-use umt::score::{
-    EventContent, EventId, EventScope, Score, ScoreContext, ScoreEvent, ScoreRef,
-    TemporalPlacement, Tie,
+#[cfg(any(feature = "serde", feature = "scala"))]
+use umt::realization::Layer;
+#[cfg(feature = "scala")]
+use umt::realization::ResidualKind;
+#[cfg(feature = "serde")]
+use umt::realization::optimization::ApproximationGuarantee;
+use umt::realization::optimization::OptimizationOutcome;
+use umt::realization::{
+    AlgorithmId, CanonicalValue, ProvenanceArena, ProvenanceId, ProvenanceRecord, Residual,
+    ResidualRecord,
 };
+use umt::score::{
+    EventContent, EventId, EventScope, Score, ScoreContext, ScoreEvent, TemporalPlacement,
+};
+#[cfg(feature = "serde")]
+use umt::score::{ScoreRef, Tie};
 use umt::temperament::{
     AmbientElem, AmbientLattice, EquivalenceDomain, HomomorphicSplit, KernelLattice, LinearSplit,
     OffsetPolicy, RepresentativePolicy, SaturationPolicy, SplitPolicy, StructuralLens,
     TemperamentMap, UnitEquivalence,
 };
+#[cfg(feature = "serde")]
+use umt::time::TimeSpan;
 use umt::time::{
     AllocationInfeasibility, AllocationOutcome, AllocationPolicy, BeatDuration, BeatSpan, BeatTime,
     Beats, BeatsPerSecond, ClockTime, DifferenceConstraint, ExternalPredicate,
     HybridTemporalProblem, LevelNumbering, LinearTemporalProblem, Meter, OrientedRatio,
     PositivityHandling, RatioConstraint, RatioOrientation, RhythmTree, Seconds, SecondsPerBeat,
     SolverProfile, StpProblem, TempoBreakpoint, TempoMap, TemporalOutcome, TickGrid, TimeSignature,
-    TimeSpan, TimeVarId,
+    TimeVarId,
 };
-use umt::{Basis, IntMatrix, PatentVal, Q, RoundingConvention, Z};
+use umt::{Basis, BasisId, IntMatrix, PatentVal, Q, RoundingConvention, Z};
 
 const NEAREST: RoundingConvention = RoundingConvention::NearestHalfAwayFromZero;
 
@@ -871,6 +894,7 @@ fn f08_unequal_voice_count() {
 /// A vibrato and a continuous glissando. UMT-3.2 section 4.7 requires that the
 /// trajectory survive a native round trip and that a device export record any
 /// sampling or quantization approximation.
+#[cfg(feature = "serde")]
 #[test]
 fn f20_continuous_pitch() {
     let steps = AmbientLattice::new("umt:edo:12", 1);
@@ -987,10 +1011,15 @@ fn score_pitch(steps: &Arc<AmbientLattice>, step: i64) -> PitchPoint<AmbientElem
 
 /// F9 - tie round trip.
 ///
+/// The third obligation is a round trip through the native encoding, so this
+/// fixture needs the `serde` feature. Without it the first two obligations are
+/// still covered by the unit tests in `src/score/container.rs`.
+///
 /// Two tied noteheads across a barline. Both L0 noteheads and the tie relation
 /// survive; a realization may contain one sustained sounding gesture; and
 /// exporting reconstructs the two noteheads and the tie
 /// (UMT-3.2 sections 5.2.2 and 9.6).
+#[cfg(feature = "serde")]
 #[test]
 fn f09_tie_round_trip() {
     let steps = AmbientLattice::new("umt:edo:12", 1);
@@ -1226,6 +1255,274 @@ fn f24_global_control_event_without_voice() {
         ),
         Err(ScoreError::SoundingEventWithoutContext { .. })
     ));
+}
+
+/// F19 - inharmonic empirical scale.
+///
+/// Measured real scale degrees with uncertainty give a valid L3
+/// representation with no forced rationalization, and an optional fitted
+/// lattice is stored separately with its residuals
+/// (UMT-3.2 sections 4.9.1 and 4.9.3).
+#[test]
+fn f19_inharmonic_empirical_scale() {
+    let campaign = ProvenanceId::new("umt:prov:field-recording");
+    let mut arena = ProvenanceArena::new();
+    arena
+        .insert(
+            campaign.clone(),
+            ProvenanceRecord::new(AlgorithmId::new("umt:algo:pitch-tracker"), "2.1.0")
+                .with_parameter(
+                    "window",
+                    CanonicalValue::Text(String::from("4096 samples, Hann")),
+                ),
+        )
+        .unwrap();
+
+    // Five measured degrees of an inharmonic instrument. None of them is a
+    // small-integer ratio, and nothing here pretends otherwise.
+    let degrees: Vec<EmpiricalDegree> = [
+        (0.0, 0.0),
+        (231.0, 12.0),
+        (474.0, 9.0),
+        (712.0, 14.0),
+        (968.0, 11.0),
+    ]
+    .into_iter()
+    .map(|(cents, uncertainty)| {
+        EmpiricalDegree::from_cents(Cents::new(cents).unwrap(), Cents::new(uncertainty).unwrap())
+            .unwrap()
+            .with_provenance(campaign.clone())
+            .with_source("umt:measurement:bar-1")
+    })
+    .collect();
+
+    let scale = EmpiricalScale::new(ScaleId::new("umt:scale:measured"), degrees)
+        .with_provenance(campaign.clone());
+
+    // A valid L3 representation, with uncertainty, and no lattice.
+    assert_eq!(scale.len(), 5);
+    assert!(scale.fit().is_none(), "no rationalization is forced");
+    assert!(scale.is_fully_attributed());
+    assert!(scale.is_ascending());
+    assert!((scale.degrees()[3].cents().get() - 712.0).abs() < 1e-9);
+    assert!(scale.degrees()[3].uncertainty() > Octaves::ZERO);
+
+    // Optionally, a fit - stored separately, with a residual for every
+    // fitted interval and all six declarations section 4.9.3 requires.
+    let fit_step = ProvenanceId::new("umt:prov:lattice-fit");
+    arena
+        .insert(
+            fit_step.clone(),
+            ProvenanceRecord::new(AlgorithmId::new("umt:algo:lattice-fit"), "0.1.0")
+                .with_parent(campaign),
+        )
+        .unwrap();
+    let declaration = FitDeclaration {
+        candidate_selection: String::from("nearest 7-limit ratio within 20 cents"),
+        tolerance: String::from("20 cents, roughly two sigma of the reported uncertainty"),
+        generators_requested: 4,
+        generators_selected: 3,
+        criterion: String::from("minimize the sum of squared cent deviations"),
+        independence: IndependenceClaim::Assumed,
+    };
+    let residuals: Vec<ResidualRecord> = [0.0, -0.6, 17.4, 10.1, -3.9]
+        .into_iter()
+        .map(|deviation| {
+            ResidualRecord::new(Residual::empirical_fit(deviation, 12.0, "cents").unwrap())
+                .with_provenance(fit_step.clone())
+        })
+        .collect();
+    let fit = LatticeFit::new(
+        BasisId::new("umt:prime:2.3.5.7"),
+        scale.len(),
+        residuals,
+        declaration,
+    )
+    .unwrap()
+    .with_provenance(fit_step);
+
+    let fitted = scale.clone().with_fit(fit).unwrap();
+
+    // The measurements are untouched by the fit.
+    assert_eq!(fitted.degrees(), scale.degrees());
+    // And the fit is stored beside them, with its residuals and its
+    // declarations intact.
+    let stored = fitted.fit().expect("the fit is retained");
+    assert_eq!(stored.residuals().len(), fitted.len());
+    assert!((stored.worst_residual() - 17.4).abs() < 1e-9);
+    assert_eq!(stored.declaration().generators_requested, 4);
+    assert_eq!(stored.declaration().generators_selected, 3);
+    assert_eq!(
+        stored.declaration().independence,
+        IndependenceClaim::Assumed,
+        "independence is declared, never inferred"
+    );
+
+    // A fit that does not cover every degree is not a fit.
+    assert!(matches!(
+        LatticeFit::new(
+            BasisId::new("umt:prime:2.3.5.7"),
+            5,
+            Vec::new(),
+            FitDeclaration {
+                candidate_selection: String::new(),
+                tolerance: String::new(),
+                generators_requested: 0,
+                generators_selected: 0,
+                criterion: String::new(),
+                independence: IndependenceClaim::Assumed,
+            }
+        ),
+        Err(PitchError::IncompleteFit { .. })
+    ));
+}
+
+/// F29 - direct empirical object without a unit.
+///
+/// A native document holding an L3 empirical scale with no exact basis and no
+/// distinguished periodic unit remains valid, with both optional sections
+/// absent (UMT-3.2 section 8.8).
+#[cfg(feature = "serde")]
+#[test]
+fn f29_direct_empirical_object_without_a_unit() {
+    let campaign = ProvenanceId::new("umt:prov:measurements");
+    let mut arena = ProvenanceArena::new();
+    arena
+        .insert(
+            campaign.clone(),
+            ProvenanceRecord::new(AlgorithmId::new("umt:algo:pitch-tracker"), "2.1.0"),
+        )
+        .unwrap();
+
+    let scale = EmpiricalScale::new(
+        ScaleId::new("umt:scale:no-unit"),
+        [(0.0, 0.0), (317.0, 15.0), (655.0, 18.0), (1043.0, 21.0)]
+            .into_iter()
+            .map(|(cents, uncertainty)| {
+                EmpiricalDegree::from_cents(
+                    Cents::new(cents).unwrap(),
+                    Cents::new(uncertainty).unwrap(),
+                )
+                .unwrap()
+                .with_provenance(campaign.clone())
+            })
+            .collect::<Vec<_>>(),
+    )
+    .with_provenance(campaign);
+
+    // No period: the measurements do not establish one, so none is claimed.
+    assert!(!scale.has_period());
+
+    let mut document = UmtDocument::new().with_profile("umt.pitch");
+    document.empirical_scales.push(scale);
+    document.provenance = arena;
+
+    // The optional sections are absent, and the document is valid.
+    assert!(document.basis.is_none(), "no L1 basis");
+    assert!(document.unit.is_none(), "no distinguished periodic unit");
+    assert!(document.mapping.is_none());
+    assert!(document.events.is_none());
+    assert!(document.has_content());
+    assert_eq!(document.validate(), Ok(()));
+    assert_eq!(document.represented_layers(), [Layer::L3Metric]);
+
+    // The absence really is absence on the wire, not a null placeholder.
+    let json = serde_json::to_string(&document).unwrap();
+    assert!(!json.contains("\"basis\""), "{json}");
+    assert!(!json.contains("\"unit\""), "{json}");
+    assert!(!json.contains("\"mapping\""), "{json}");
+    assert!(json.contains("empirical_scales"));
+
+    let parsed: UmtDocument = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed, document);
+    assert_eq!(parsed.validate(), Ok(()));
+    assert!(parsed.is_fully_understood());
+
+    // A unit without a basis to interpret it against is refused, which is the
+    // other half of the same rule.
+    let mut broken = UmtDocument::new();
+    broken.unit = Some(MonzoRef {
+        basis: BasisId::new("umt:prime:2.3.5"),
+        exponents: vec![Z::from(1), Z::from(0), Z::from(0)],
+    });
+    assert_eq!(broken.validate(), Err(IoError::UnitWithoutBasis));
+
+    // And a document declaring a profile this build does not implement loads,
+    // but is not silently treated as understood.
+    let future = UmtDocument::new().with_profile("umt.future-extension");
+    assert!(!future.is_fully_understood());
+    assert_eq!(future.unsupported_profiles(), ["umt.future-extension"]);
+    assert_eq!(
+        future.validate(),
+        Ok(()),
+        "and it is still a valid document"
+    );
+}
+
+/// F21 - Scala file with mixed exact and metric entries.
+///
+/// An importer preserves the distinction between a rational ratio entry and a
+/// cents entry (UMT-3.2 section 8.2).
+#[cfg(feature = "scala")]
+#[test]
+fn f21_scala_mixed_exact_and_metric_entries() {
+    use umt::io::scala::{ScalaAdapter, ScalaEntry, ScalaScale};
+
+    // At least one rational ratio and at least one cents value, as the
+    // fixture requires.
+    let text = "\
+! mixed.scl
+!
+Five-limit major with a tempered third
+ 4
+!
+ 9/8
+ 386.313714
+ 3/2
+ 2/1
+";
+    let scale = ScalaScale::parse(text).unwrap();
+    assert_eq!(scale.len(), 4);
+    assert!(scale.is_mixed(), "the fixture's whole point");
+    assert_eq!(scale.exact_count(), 3);
+
+    // The exact entries kept their exactness.
+    assert_eq!(
+        scale.entries()[0].exact_ratio(),
+        Some(&Q::new(Z::from(9), Z::from(8)))
+    );
+    assert_eq!(
+        scale.entries()[2].exact_ratio(),
+        Some(&Q::new(Z::from(3), Z::from(2)))
+    );
+
+    // The metric entry did not acquire any.
+    assert!(!scale.entries()[1].is_exact());
+    assert_eq!(scale.entries()[1].exact_ratio(), None);
+    assert!(matches!(scale.entries()[1], ScalaEntry::Cents(_)));
+
+    // The distinction survives a round trip through the format itself.
+    assert_eq!(ScalaScale::parse(&scale.to_scl_text()).unwrap(), scale);
+
+    // Flattening to a uniform L3 scale is available and reports its cost,
+    // rather than happening on import.
+    let (empirical, lost) = scale
+        .to_empirical_scale(ScaleId::new("umt:scale:mixed"))
+        .unwrap();
+    assert_eq!(empirical.len(), 4);
+    assert_eq!(
+        lost.of_kind(ResidualKind::Notation).count(),
+        3,
+        "one notation residual per exact entry that was flattened"
+    );
+
+    // And the adapter declares all five things section 8.1 requires.
+    let profile = ScalaAdapter::profile();
+    assert!(!profile.imports.is_empty());
+    assert!(!profile.exports.is_empty());
+    assert_eq!(profile.layers, [Layer::L1Exact, Layer::L3Metric]);
+    assert!(!profile.dropped.is_empty());
+    assert!(profile.tested_profile.contains("Scala"));
 }
 
 /// F10 - 6/8 versus 3/4.
@@ -1552,9 +1849,12 @@ fn f18_external_temporal_predicate() {
     );
     assert!(predicate.contract.contains("configured detector"));
     assert_eq!(predicate.parameters["threshold_db"], "-40");
-    let json = serde_json::to_string(predicate).unwrap();
-    let parsed: ExternalPredicate = serde_json::from_str(&json).unwrap();
-    assert_eq!(&parsed, predicate);
+    #[cfg(feature = "serde")]
+    {
+        let json = serde_json::to_string(predicate).unwrap();
+        let parsed: ExternalPredicate = serde_json::from_str(&json).unwrap();
+        assert_eq!(&parsed, predicate);
+    }
 }
 
 /// F25 - strict ratio positivity, with no invented delta.

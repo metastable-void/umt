@@ -7,9 +7,7 @@ choice made explicit.
 
 ## Status
 
-The exact structural core, the pitch layer, the time layer, the score layer,
-and the realization layer are built. What remains is the native container, the
-external format adapters, and generated sets.
+Every part of UMT-3.2 is implemented except part III, generated structures.
 
 Implemented: the proportion lattice; exact integer matrices with Smith and
 canonical Hermite normal forms; free lattices and quotients; regular
@@ -28,14 +26,14 @@ score with scoped events, ties that are relations rather than merges, and
 transformations that claim compositionality only when they have it; an
 immutable theory context with reference-based serialization; a typed residual
 taxonomy with structured provenance in an arena; and a compiled, bounded
-performance plan whose realtime contract is a checkable value.
+performance plan whose realtime contract is a checkable value; directly
+measured L3 scales that need no lattice explanation; the native document
+container; and a Scala `.scl` adapter that keeps each entry in its own layer.
 
-**Thirty of the thirty-five UMT-3.2 fixtures pass**, and all six of the
-implementation prompt's mandatory examples run. Of the five remaining, two
-need the empirical L3 scale and the `.scl` adapter, one needs the native
-container, one needs generated sets, and one lints the specification source
-rather than the library. See `docs/architecture.md` for the staging plan and
-`docs/conformance.md` for the fixture matrix.
+**Thirty-four of the thirty-five UMT-3.2 fixtures pass**, and all six of the
+implementation prompt's mandatory examples run. The one remaining, F35, needs
+the generated-set machinery of part III. See `docs/architecture.md` for the
+staging plan and `docs/conformance.md` for the fixture matrix.
 
 This crate does not yet claim UMT-3.2 conformance. Conformance is claimed only
 when the applicable mandatory fixture suite passes.
@@ -245,6 +243,39 @@ assert_eq!(gestures[0].span().duration(), Beats::ratio(4, 1)?);
 # Ok::<(), Box<dyn core::error::Error>>(())
 ```
 
+A Scala file can mix exact ratios and cents values, so it is not uniformly L3.
+The importer keeps each entry in the layer it was written in (fixture F21):
+
+```rust,ignore
+use umt::io::scala::ScalaScale;
+
+let scale = ScalaScale::parse("\
+! mixed.scl
+!
+A scale with both kinds of entry
+ 3
+!
+ 9/8
+ 386.313714
+ 2/1
+")?;
+
+assert!(scale.is_mixed());
+
+// The ratios stayed exact; the cents value did not acquire exactness.
+assert!(scale.entries()[0].is_exact());
+assert!(!scale.entries()[1].is_exact());
+assert_eq!(scale.entries()[1].exact_ratio(), None);
+
+// Flattening to a uniform L3 scale is available, and reports its cost.
+let (_, lost) = scale.to_empirical_scale(umt::pitch::ScaleId::new("umt:scale:mixed"))?;
+assert_eq!(lost.len(), 2, "one notation residual per flattened exact entry");
+# Ok::<(), Box<dyn core::error::Error>>(())
+```
+
+Requires the `scala` feature; the verified form of this example is the module
+documentation of `umt::io::scala`.
+
 Monzos over different bases are different objects, and the type system says so:
 
 ```rust
@@ -287,6 +318,16 @@ their uncertainty and provenance where the specification requires it.
 Transcendental functions come from [`libm`] in every build, including `std`
 builds, so an L3 result does not vary with the host math library or with which
 Cargo features are enabled.
+
+## Features
+
+| Feature | Default | What it adds |
+|---|---|---|
+| `std` | yes | host integrations only; it must never change a computed value |
+| `serde` | no | the native document container and exact-text serialization |
+| `scala` | no | the Scala `.scl` adapter of UMT-3.2 section 8.2 |
+
+Neither optional feature adds a dependency the core does not already have.
 
 ## `no_std`
 

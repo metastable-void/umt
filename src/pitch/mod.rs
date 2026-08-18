@@ -24,6 +24,7 @@
 //! belongs with the external adapters).
 
 pub mod chord;
+pub mod empirical;
 pub mod point;
 pub mod trajectory;
 pub mod tuning;
@@ -32,6 +33,10 @@ pub mod voice_leading;
 
 #[doc(inline)]
 pub use crate::pitch::chord::{Chord, ChordAnnotation, PitchMultiset, VoiceId, VoiceSet};
+#[doc(inline)]
+pub use crate::pitch::empirical::{
+    EmpiricalDegree, EmpiricalScale, FitDeclaration, IndependenceClaim, LatticeFit, ScaleId,
+};
 #[doc(inline)]
 pub use crate::pitch::point::{IntervalGroupElement, PitchOrigin, PitchPoint, PitchPointRef};
 #[doc(inline)]

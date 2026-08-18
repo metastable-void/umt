@@ -6,8 +6,12 @@
 
 #![cfg(feature = "serde")]
 
+use std::collections::BTreeMap;
+
 use umt::algebra::matrix::IntMatrix;
 use umt::context::{MonzoRef, TemperamentMapRef, TheoryContext};
+use umt::error::IoError;
+use umt::io::document::{PolicyDeclaration, UmtDocument};
 use umt::io::version::{NATIVE_SCHEMA_VERSION, UmtSchemaVersion};
 use umt::pitch::{Edge, PitchOrigin, PitchPoint, PitchPointRef, VoiceId, VoiceLeading, VoiceSet};
 use umt::proportion::{
@@ -15,6 +19,7 @@ use umt::proportion::{
     RealValuation,
 };
 use umt::realization::provenance::ProvenanceId;
+use umt::realization::record::Layer;
 use umt::score::{
     EventContent, EventId, EventScope, Score, ScoreEvent, ScoreRef, TemporalPlacement, Tie,
 };
@@ -23,7 +28,7 @@ use umt::time::{
     BeatDuration, BeatSpan, BeatTime, ClockTime, DifferenceConstraint, Meter, RhythmTree, Seconds,
     SecondsPerBeat, TempoMap, TimeSignature, TimeSpan, TimeVarId,
 };
-use umt::{Q, Z};
+use umt::{BasisId, Q, Z};
 
 fn huge_rational() -> Q {
     // A value no floating-point encoding could carry.
@@ -363,5 +368,85 @@ fn score_objects_round_trip_and_revalidate() {
     assert!(
         rebuilt.is_err(),
         "a tie to an absent event cannot be rebuilt"
+    );
+}
+
+#[test]
+fn a_native_document_round_trips_with_only_the_sections_it_needs() {
+    let basis = Basis::primes("umt:prime:2.3.5", &[2, 3, 5]).unwrap();
+    let steps = AmbientLattice::new("umt:edo:12", 1);
+    let map = TemperamentMap::from_rows(&basis, &steps, [[12i64, 19, 28]]).unwrap();
+
+    let mut document = UmtDocument::new()
+        .with_profile("umt.pitch")
+        .with_profile("umt.time");
+    document.basis = Some(RawBasis::from(basis.as_ref().clone()));
+    document.unit = Some(MonzoRef {
+        basis: BasisId::new("umt:prime:2.3.5"),
+        exponents: vec![Z::from(1), Z::from(0), Z::from(0)],
+    });
+    document.mapping = Some(TheoryContext::mapping_ref(&map));
+    document
+        .rhythm_trees
+        .push(RhythmTree::additive(&[2, 2, 3]).unwrap());
+
+    // A representative policy has to be reproducible one way or the other.
+    document.representative_policy = Some(PolicyDeclaration {
+        kind: String::from("canonical-lift"),
+        policy_id: Some(String::from("umt:policy:canonical")),
+        algorithm_version: Some(String::from("0.1.0")),
+        parameters: BTreeMap::new(),
+        homomorphic: false,
+        resolved_lifts: Vec::new(),
+    });
+    assert_eq!(document.validate(), Ok(()));
+
+    let json = serde_json::to_string(&document).unwrap();
+    // UMT-3.2 section 8.9: monzo coordinates and matrix entries exactly, and
+    // never through JSON floating point.
+    assert!(json.contains("\"12\""), "{json}");
+    assert!(!json.contains("12.0"));
+    // Absent sections are absent, not null.
+    assert!(!json.contains("\"events\""));
+    assert!(!json.contains("\"tempo\""));
+
+    let parsed: UmtDocument = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed, document);
+    assert_eq!(parsed.validate(), Ok(()));
+    assert!(parsed.is_fully_understood());
+    assert_eq!(
+        parsed.represented_layers(),
+        [Layer::L1Exact, Layer::L2Quotient]
+    );
+
+    // A policy that can be reproduced from neither an identifier nor its
+    // selected lifts is refused (section 8.8).
+    let mut adaptive = document.clone();
+    adaptive.representative_policy = Some(PolicyDeclaration {
+        kind: String::from("adaptive"),
+        policy_id: None,
+        algorithm_version: None,
+        parameters: BTreeMap::new(),
+        homomorphic: false,
+        resolved_lifts: Vec::new(),
+    });
+    assert_eq!(adaptive.validate(), Err(IoError::IrreproduciblePolicy));
+
+    // The same policy, with the lifts it actually chose, is fine.
+    adaptive
+        .representative_policy
+        .as_mut()
+        .unwrap()
+        .resolved_lifts = vec![MonzoRef {
+        basis: BasisId::new("umt:prime:2.3.5"),
+        exponents: vec![Z::from(-1), Z::from(1), Z::from(0)],
+    }];
+    assert_eq!(adaptive.validate(), Ok(()));
+    let reparsed: UmtDocument =
+        serde_json::from_str(&serde_json::to_string(&adaptive).unwrap()).unwrap();
+    assert_eq!(
+        reparsed.representative_policy.unwrap().resolved_lifts.len(),
+        1,
+        "the selected lifts survive, which is what makes the policy reproducible"
     );
 }

@@ -611,6 +611,26 @@ pub enum PitchError {
     #[error("this sampling contains no samples")]
     NoSamples,
 
+    /// A measurement uncertainty was negative.
+    #[error("a measurement uncertainty cannot be negative")]
+    NegativeUncertainty,
+
+    /// A lattice fit did not cover every measured degree with an
+    /// empirical-fit residual.
+    ///
+    /// UMT-3.2 section 4.9.3 requires "the approximation residual for every
+    /// fitted interval", so a fit that reports fewer is incomplete rather than
+    /// partial.
+    #[error(
+        "a lattice fit of {degrees} degrees needs {degrees} empirical-fit residuals, found {residuals}"
+    )]
+    IncompleteFit {
+        /// Degrees the scale has.
+        degrees: usize,
+        /// Residuals the fit supplied.
+        residuals: usize,
+    },
+
     /// An underlying physical-time operation failed.
     #[error(transparent)]
     Time(#[from] TimeError),
@@ -923,4 +943,54 @@ pub enum RealizationError {
     /// An underlying temperament operation failed.
     #[error(transparent)]
     Temperament(#[from] TemperamentError),
+}
+
+/// A native document could not be validated.
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+#[non_exhaustive]
+pub enum IoError {
+    /// This build cannot read the document's schema version.
+    #[error("cannot read schema version {document}; this build writes {native}")]
+    UnreadableSchema {
+        /// The document's version.
+        document: crate::io::version::UmtSchemaVersion,
+        /// This build's version.
+        native: crate::io::version::UmtSchemaVersion,
+    },
+
+    /// A distinguished unit was present with no basis to interpret it.
+    ///
+    /// The unit is a monzo, and a monzo's coordinates mean nothing without the
+    /// basis they are over (UMT-3.2 section 1.1).
+    #[error("a distinguished unit needs a basis to be interpreted against")]
+    UnitWithoutBasis,
+
+    /// A representative policy could be reproduced neither from an identifier
+    /// and version nor from the lifts it used.
+    ///
+    /// UMT-3.2 section 8.8 requires one or the other whenever the choices
+    /// matter for round trip.
+    #[error(
+        "a representative policy must be reproducible from an identifier and version, \
+         or must serialize the lifts it selected"
+    )]
+    IrreproduciblePolicy,
+
+    /// A section referenced a provenance record the document does not carry.
+    #[error("provenance record `{id}` is referenced but not present in this document")]
+    DanglingProvenance {
+        /// The unresolved identifier.
+        id: crate::realization::provenance::ProvenanceId,
+    },
+
+    /// An external format could not be parsed.
+    #[error("malformed {format} input at line {line}: {reason}")]
+    MalformedInput {
+        /// Which format was being read.
+        format: String,
+        /// The line the problem was found on, counting from 1.
+        line: usize,
+        /// What was wrong.
+        reason: String,
+    },
 }

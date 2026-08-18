@@ -40,6 +40,7 @@ src/
     point.rs              PitchOrigin, PitchPoint torsor, PitchPointRef
     tuning.rs             RegularTuning, PitchRealization, PitchRealizer
     chord.rs              VoiceId, VoiceSet, Chord, PitchMultiset, annotations
+    empirical.rs          EmpiricalScale, LatticeFit - measured L3 scales
     voice_leading.rs      VoiceLeading span, span cost, chord distance profiles
     trajectory.rs         Deviation, PitchTrajectory, sampling and its record
   score/
@@ -75,6 +76,8 @@ src/
   io/
     text.rs               canonical exact-value text codec
     version.rs            UmtSchemaVersion, compatibility rule
+    document.rs           UmtDocument, the native container of section 8.8
+    scala.rs              the `.scl` adapter (feature `scala`)
     serde_exact.rs        serde adapters (feature `serde`)
 ```
 
@@ -87,9 +90,14 @@ the general machinery that are meaningful only because the ambient rank is 1;
 
 Following the staging of the implementation prompt, in order:
 
-1. The native container in `io/` (F29), then external adapters (F19, F21),
-   which also bring the empirical L3 scale of section 4.9.
-2. Generated structures (part III, F35), which are independent of the rest.
+1. Generated structures (part III, F35): modular generated sets, three-gap
+   behaviour, MOS and well-formed profiles, modes and rotations, Euclidean
+   rhythms. Independent of everything else, and the last outstanding stage.
+
+Further external adapters - MusicXML, MEI, MIDI, MNX, and Scala `.kbm` - are
+deliberately out of scope for the first release (prompt section 40). The
+internal model is shaped so they can be added behind features later, and
+`io::scala::AdapterProfile` is the declaration shape each of them will use.
 
 Deliberately deferred: pitch notation at L0 (section 4.5), because prompt
 section 55 says not to overbuild notation in v1.
@@ -185,20 +193,6 @@ replaced by an invented `delta`, which is fixture F25. The cost is
 combinatorial blow-up, so the elimination is budgeted and reports exhaustion
 rather than guessing.
 
-## Checks
-
-```text
-cargo fmt --check
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test --all-features
-cargo build --no-default-features --target x86_64-unknown-none
-cargo clippy --no-default-features --target x86_64-unknown-none -- -D warnings
-```
-
-The bare-metal build is not decoration: it is the only check that catches a
-dependency feature silently pulling `std` back in through feature unification.
-A host build cannot detect that.
-
 ## Realtime
 
 The semantic core is not realtime-safe and does not try to be. The boundary is
@@ -243,3 +237,60 @@ a difference; a notation residual is symbolic.
 `examples/performance_compilation.rs` shows all three of the common kinds
 arising from one compilation: an exact syntonic comma, an exact rational grid
 residual totalling `1/48` of a beat, and a real device-control residual.
+
+## Why the container's sections are all optional
+
+Section 8.8 requires it: "Domain sections are present only when required by the
+represented objects; this is necessary because UMT permits, for example, direct
+empirical L3 scales with no L1 basis and domains with no distinguished periodic
+unit."
+
+So `UmtDocument` has no mandatory domain section, and absence is meaningful
+rather than a defect. The serialized form omits an absent section entirely
+rather than writing a null, because a null would be a claim that the section
+exists and is empty.
+
+The one cross-section rule that *is* enforced runs the other way: a
+distinguished `unit` without a `basis` is refused, since the unit is a monzo
+and a monzo's coordinates mean nothing without the basis they are over.
+
+## How unknown extensions are handled
+
+Prompt section 39 asks to "allow unknown future extension fields where feasible
+without silently treating them as understood". Two mechanisms:
+
+- **Profiles.** A document declares a profile set. This build implements the
+  profiles in `SUPPORTED_PROFILES`; a document declaring anything else loads,
+  and `unsupported_profiles()` names it, and `is_fully_understood()` is false.
+  Nothing pretends the semantics were honoured.
+- **Extension data.** `UmtDocument::extensions` holds `CanonicalValue`, so an
+  extension's exact rational stays exact rather than becoming a double on the
+  way through.
+
+The schema version governs the *encoding* and the profile set governs the
+*semantics*; they are separate questions and separate fields.
+
+## Checks, with feature combinations
+
+The crate's own check list, which every change is expected to pass:
+
+```text
+cargo fmt --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo clippy --all-targets -- -D warnings
+cargo test --all-features
+cargo test
+cargo build --no-default-features --features serde,scala --target x86_64-unknown-none
+cargo clippy --no-default-features --target x86_64-unknown-none -- -D warnings
+RUSTDOCFLAGS="-D warnings" cargo doc --all-features --no-deps
+```
+
+The second and fifth lines matter more than they look. A test suite that only
+compiles with `--all-features` is a test suite nobody can run by typing
+`cargo test`, and fixtures whose obligations are specifically about an encoding
+- F9, F20, F21, F29 - are gated on the feature that provides it rather than
+making the whole suite depend on one.
+
+The bare-metal line is not decoration either: it is the only check that catches
+a dependency feature silently pulling `std` back in through feature
+unification. A host build cannot detect that.

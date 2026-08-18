@@ -24,7 +24,7 @@ Status values:
 | F6 | Nonhomomorphic representative policy | pass | `tests/conformance.rs::f06_nonhomomorphic_representative_policy` |
 | F7 | Enharmonic spelling | pass | `tests/conformance.rs::f07_enharmonic_spelling` |
 | F8 | Unequal voice count | pass | `tests/conformance.rs::f08_unequal_voice_count` |
-| F9 | Tie round trip | pass | `tests/conformance.rs::f09_tie_round_trip` |
+| F9 | Tie round trip | pass | `tests/conformance.rs::f09_tie_round_trip` (feature `serde`) |
 | F10 | 6/8 versus 3/4 | pass | `tests/conformance.rs::f10_six_eight_versus_three_four` |
 | F11 | Additive 2+2+3 | pass | `tests/conformance.rs::f11_additive_two_two_three` |
 | F12 | Naive quintuplet floor gives 95 | pass | `tests/conformance.rs::f12_naive_quintuplet_floor` |
@@ -34,9 +34,9 @@ Status values:
 | F16 | STP contradiction | pass | `tests/conformance.rs::f16_stp_contradiction` |
 | F17 | Ratio constraint is not a difference edge | pass | `tests/conformance.rs::f17_ratio_constraint_is_not_a_difference_edge` |
 | F18 | External temporal predicate | pass | `tests/conformance.rs::f18_external_temporal_predicate` |
-| F19 | Inharmonic empirical scale | pending | needs the L3 scale object |
-| F20 | Continuous pitch trajectory | pass | `tests/conformance.rs::f20_continuous_pitch` |
-| F21 | Scala mixed exact and metric entries | pending | needs the `.scl` adapter |
+| F19 | Inharmonic empirical scale | pass | `tests/conformance.rs::f19_inharmonic_empirical_scale` |
+| F20 | Continuous pitch trajectory | pass | `tests/conformance.rs::f20_continuous_pitch` (feature `serde`) |
+| F21 | Scala mixed exact and metric entries | pass | `tests/conformance.rs::f21_scala_mixed_exact_and_metric_entries` (feature `scala`) |
 | F22 | Reachable versus ambient octave classes | pass | `tests/conformance.rs::f22_reachable_versus_ambient_classes` |
 | F23 | Unmeasured event without fixed onset | pass | `tests/conformance.rs::f23_unmeasured_event_without_fixed_onset` |
 | F24 | Global control event without a voice | pass | `tests/conformance.rs::f24_global_control_event_without_voice` |
@@ -44,20 +44,23 @@ Status values:
 | F26 | Unattained optimization infimum | pass | `tests/conformance.rs::f26_unattained_optimization_infimum` |
 | F27 | Infeasible positive-span device allocation | pass | `tests/conformance.rs::f27_infeasible_positive_span_allocation` |
 | F28 | Context-dependent realization typing | pass | `tests/conformance.rs::f28_context_dependent_realization_typing` |
-| F29 | Direct empirical object without a unit | pending | needs the native container |
-| F30 | Markdown math-source and vocabulary lint | pending | source lint, not a library test |
+| F29 | Direct empirical object without a unit | pass | `tests/conformance.rs::f29_direct_empirical_object_without_a_unit` (feature `serde`) |
+| F30 | Markdown math-source and vocabulary lint | pass | `tests/spec_lint.rs` |
 | F31 | Regular interval tuning requires a point reference | pass | `tests/conformance.rs::f31_regular_tuning_requires_a_point_reference` |
 | F32 | Reciprocal rate and duration orientation | pass | `tests/conformance.rs::f32_reciprocal_rate_and_duration_orientation` |
 | F33 | Saturation excludes the zero multiplier | pass | `tests/conformance.rs::f33_saturation_excludes_the_zero_multiplier` |
 | F34 | Group length versus lattice norm | pass | `tests/conformance.rs::f34_group_length_versus_lattice_norm` |
 | F35 | Three-note quarter-comma-meantone MOS | pending | needs generated sets |
 
-Thirty of the thirty-five fixtures pass; none is partial. Of the five
-remaining, F19 and F21 need the empirical L3 scale object and the `.scl`
-adapter, F29 needs the native container, F35 needs generated sets, and F30 is a
-lint over the specification source rather than a library test.
+Thirty-four of the thirty-five fixtures pass; none is partial. The one
+remaining, F35, needs the generated-set machinery of part III.
 
-Three of them are worth naming, because all three are easy to claim loosely.
+Some fixtures are gated on a feature, because their obligations are
+specifically about an encoding: F9, F20, and F29 need `serde`, and F21 needs
+`scala`. The rest of each fixture's subject matter is covered by unit tests
+that run under any feature set.
+
+Four of them are worth naming, because all four are easy to claim loosely.
 
 F20's obligations are discharged in full: the trajectory survives a native
 round trip through `PitchTrajectoryRef` *exactly*, not to within a tolerance,
@@ -77,6 +80,12 @@ would be easy. The two noteheads and the tie relation survive in the score;
 `Score::sounding_gestures` produces one sustained gesture *and* keeps both
 source identities inside it; and a native round trip reconstructs a score equal
 to the original, with two events rather than one merged note.
+
+F29 is about an *absence*. The test asserts not merely that a document with no
+basis and no unit validates, but that the JSON contains no `basis` and no
+`unit` key at all - a null placeholder would be a different claim. It also
+checks the converse rule: a unit *without* a basis is refused, since a monzo's
+coordinates mean nothing without the basis they are over.
 
 ## Law coverage
 
@@ -121,6 +130,11 @@ UMT-3.2 section 9.1 and prompt section 47 laws currently exercised, in
 | Section 7.9 residual taxonomy | the unit tests in `src/realization/residual.rs` |
 | Section 7.10 provenance | the unit tests in `src/realization/provenance.rs` |
 | Section 7.4 round-trip justification | the unit tests in `src/realization/record.rs` |
+| Section 4.9.1 direct empirical scales | the unit tests in `src/pitch/empirical.rs` |
+| Section 4.9.3 lattice-inference declarations | `f19_inharmonic_empirical_scale`, plus the unit tests in `src/pitch/empirical.rs` |
+| Section 8.1 adapter declarations | `the_adapter_declares_all_five_things_section_8_1_asks_for` in `src/io/scala.rs` |
+| Section 8.8 optional container sections | `f29_direct_empirical_object_without_a_unit` |
+| Section 8.9 serialization invariants | `tests/serialization.rs` |
 
 P8 to P11 run against four mapping shapes - surjective, non-surjective, the
 zero map, and rank 2 - so the degenerate cases are covered rather than assumed
@@ -180,9 +194,9 @@ answer, exactly when a component is application-declared and therefore does not
 compose. `claims_compositional` reports which case a given transformation is
 in.
 
-The remaining notation laws of section 9.6 and the generated-structure laws of
-section 9.11 are not yet applicable: L0 spelling is deliberately deferred by
-prompt section 55, and generated sets are a later stage.
+The remaining notation laws of section 9.6 are not yet applicable: L0 spelling
+is deliberately deferred by prompt section 55. The generated-structure laws of
+section 9.11 are the last outstanding group, and arrive with part III.
 
 ## Examples
 
