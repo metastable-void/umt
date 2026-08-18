@@ -7,9 +7,9 @@ choice made explicit.
 
 ## Status
 
-The exact structural core, the pitch layer, the time layer, and the score layer
-are built. What remains is the device boundary, the native container, the
-external adapters, and generated sets.
+The exact structural core, the pitch layer, the time layer, the score layer,
+and the realization layer are built. What remains is the native container, the
+external format adapters, and generated sets.
 
 Implemented: the proportion lattice; exact integer matrices with Smith and
 canonical Hermite normal forms; free lattices and quotients; regular
@@ -25,10 +25,13 @@ trees, meter, and grouping; the rate/duration orientation rule; grid
 quantization that returns its residuals; tempo maps in the homeomorphism
 profile; three separate temporal-constraint solver profiles; an event-indexed
 score with scoped events, ties that are relations rather than merges, and
-transformations that claim compositionality only when they have it; and an
-immutable theory context with reference-based serialization.
+transformations that claim compositionality only when they have it; an
+immutable theory context with reference-based serialization; a typed residual
+taxonomy with structured provenance in an arena; and a compiled, bounded
+performance plan whose realtime contract is a checkable value.
 
-**Thirty of the thirty-five UMT-3.2 fixtures pass.** Of the five remaining, two
+**Thirty of the thirty-five UMT-3.2 fixtures pass**, and all six of the
+implementation prompt's mandatory examples run. Of the five remaining, two
 need the empirical L3 scale and the `.scl` adapter, one needs the native
 container, one needs generated sets, and one lints the specification source
 rather than the library. See `docs/architecture.md` for the staging plan and
@@ -294,9 +297,11 @@ additive and must never change a computed value.
 cargo build --no-default-features --target x86_64-unknown-none
 ```
 
-`no_std` is not a realtime claim. Arbitrary-precision arithmetic allocates; the
-realtime story is the bounded, validated performance plan, which is not built
-yet.
+`no_std` is not a realtime claim. Arbitrary-precision arithmetic allocates, so
+the semantic core is not realtime-safe and does not try to be. The boundary is
+`realization::PerformancePlan`, whose guarantees are a `RealtimeContract`
+value rather than a marker trait; `docs/realtime.md` states what it does and
+does not cover.
 
 ## Relationship to UMT-3.2
 

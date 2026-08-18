@@ -12,7 +12,7 @@ convenience.
 | L1 exact structure | monzos, exact ratios, rational durations | `algebra`, `proportion`, `time::beat` |
 | L2 structural quotient | tempered classes, image lattices, meter | `temperament`, `pitch::{chord, voice_leading}`, `time::{rhythm, meter}` |
 | L3 metric realization | log-frequency, tuning curves, tempo maps | `pitch::{units, tuning, trajectory}`, `time`, `realization` |
-| L4 device realization | ticks, MIDI, control words | `pitch::trajectory::SampledTrajectory` only |
+| L4 device realization | ticks, MIDI, control words | `time::quantize`, `realization::plan`, `pitch::trajectory::SampledTrajectory` |
 
 ## Present modules
 
@@ -68,7 +68,10 @@ src/
     edo.rs                PatentVal, Exactness
   realization/
     optimization.rs       OptimizationOutcome, ApproximationGuarantee
-    provenance.rs         ProvenanceId
+    residual.rs           the seven-kind residual taxonomy of section 7.9
+    provenance.rs         ProvenanceRecord, ProvenanceArena, CanonicalValue
+    record.rs             RealizationRecord, DeviceAdapterProfile
+    plan.rs               PerformancePlan, the realtime boundary
   io/
     text.rs               canonical exact-value text codec
     version.rs            UmtSchemaVersion, compatibility rule
@@ -84,11 +87,9 @@ the general machinery that are meaningful only because the ambient rank is 1;
 
 Following the staging of the implementation prompt, in order:
 
-1. The rest of `realization/` - residual taxonomy, realization records, the
-   compiled performance-plan boundary.
-2. The native container in `io/` (F29), then external adapters (F19, F21),
+1. The native container in `io/` (F29), then external adapters (F19, F21),
    which also bring the empirical L3 scale of section 4.9.
-3. Generated structures (part III, F35), which are independent of the rest.
+2. Generated structures (part III, F35), which are independent of the rest.
 
 Deliberately deferred: pitch notation at L0 (section 4.5), because prompt
 section 55 says not to overbuild notation in v1.
@@ -200,10 +201,11 @@ A host build cannot detect that.
 
 ## Realtime
 
-Not yet documented, because nothing here makes a realtime claim. The semantic
-core allocates and uses arbitrary-precision arithmetic by design. `docs/realtime.md`
-arrives with the compiled performance-plan boundary; until then, no type in
-this crate is realtime-safe and none claims to be.
+The semantic core is not realtime-safe and does not try to be. The boundary is
+`realization::PerformancePlan`, whose contract is a *value* -
+`RealtimeContract`, with five named fields - rather than a marker trait that
+cannot be checked. `docs/realtime.md` states what a compiled plan guarantees,
+what it does not, and why building one is deliberately not realtime-safe.
 
 ## Why the score is generic over its pitch attachment
 
@@ -221,3 +223,23 @@ It also states something true: what a note carries is a parameter of the score,
 not a fixed choice. A score of 5-limit monzos and a score of 12-EDO steps are
 different types, which is the same discipline `Monzo` and `Chord` already
 apply.
+
+## Why residuals have seven types and no `Add`
+
+Section 7.9 opens by ruling something out: "UMT-3.2 never stores one
+undifferentiated `error` field." The seven kinds it tabulates are in genuinely
+different spaces - an exact kernel element, a real interval, a real value with
+an uncertainty, an exact rational duration, a pair of encoded control values, a
+symbolic note - and a single `f64` would make every question about them
+unanswerable.
+
+So `Residual` is an enum whose variants carry their own units, and there is no
+`Add` implementation. `Residual::try_add` succeeds within a kind that is
+genuinely additive - structural, tuning, temporal, grid - and refuses
+otherwise. An empirical fit is refused because combining its uncertainties
+needs a model nobody declared; a device-control residual is a pair rather than
+a difference; a notation residual is symbolic.
+
+`examples/performance_compilation.rs` shows all three of the common kinds
+arising from one compilation: an exact syntonic comma, an exact rational grid
+residual totalling `1/48` of a beat, and a real device-control residual.

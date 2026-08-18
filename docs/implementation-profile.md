@@ -522,7 +522,74 @@ later re-realization to be able to consult the original source rather than
 compound previous rounding, which is only possible if the earlier steps
 survive.
 
-## D38. `divisions = 0` is a legal mapping
+## D40. Residual addition is refused for three of the seven kinds
+
+`Residual::try_add` succeeds within the structural, tuning-deviation,
+temporal-realization, and grid kinds, and refuses the other three. Prompt
+section 35 forbids "a generic arithmetic `Add` across residual variants", and
+section 7.9 permits addition only where it "is mathematically meaningful".
+
+- **Empirical fit** is refused because combining two uncertainties needs a
+  declared error model, and picking one silently would fabricate a claim about
+  the measurements.
+- **Device control** is a pair of values - requested and encoded - not a
+  difference; adding two pairs has no meaning.
+- **Notation** is symbolic and has no numeric value to add.
+
+There is no `Add` implementation for `Residual` at all, so the refusal is at
+the type level and the exception is the named method.
+
+## D41. A provenance record must name its algorithm and version **binding**
+
+`ProvenanceArena::insert` rejects a record whose algorithm or version is empty.
+Section 7.10 requires provenance "sufficient to identify the semantic profile,
+algorithm/version, and parameters that affect the result", and a record without
+those two cannot be sufficient for anything.
+
+Parents must already be present when a record is inserted. That makes the
+ancestry graph acyclic by construction rather than by a later check, and it is
+why `ProvenanceArena::ancestors` terminates for every input.
+
+## D42. Provenance parameters are a typed tree, not a blob
+
+`CanonicalValue` has exact `Integer` and `Rational` variants alongside `Real`,
+so an exact tolerance stays exact through a round trip and a measured one is
+visibly a double. `CanonicalValue::is_exact` reports which a record is.
+
+Prompt section 36 rules out "copying arbitrary JSON blobs into every semantic
+object"; the deeper reason is that a blob cannot preserve the exactness
+distinction this crate spends most of its effort maintaining.
+
+## D43. A losslessness claim has exactly two admissible justifications
+
+`RoundTripBasis` has `InjectiveOnDomain`, `SourceRetained`, and
+`NotReversible`, and `RealizationRecord::claims_lossless` is true only for the
+first two. Section 7.4 lists those two conditions and nothing else, and names
+the second as UMT-3.2's default design.
+
+`InjectiveOnDomain` carries the domain as a mandatory string, because
+injectivity has to hold of the *represented* domain rather than of the map in
+general, and a claim that does not say which domain is not checkable.
+
+## D44. The realtime contract is a value, not a marker trait **binding**
+
+`PerformancePlan::realtime_contract` returns a `RealtimeContract` with five
+named boolean fields. Prompt section 38 forbids claiming `RealtimeSafe` without
+a documented contract the type satisfies, and a marker trait cannot be asserted
+on in a test.
+
+The five guarantees, each established by the build step: reads return borrowed
+slices, every stored value is a bounded integer, ranges were validated at build
+time, voices and pitches are resolved to indices and millicents, and events are
+sorted once by a total derived ordering. `docs/realtime.md` states the contract
+in prose and says plainly what it does *not* cover.
+
+Bounds: `MAX_TICK` is `u32::MAX / 2` and `MAX_MILLICENTS` is twenty octaves
+either way. Both are arbitrary in the sense that some number had to be chosen,
+and deliberate in that exceeding either is a signal that a single plan is the
+wrong structure.
+
+## D45. `divisions = 0` is a legal mapping
 
 The zero mapping has image `{0}`, which section 1.6 fixes through the
 convention `gcd(0, ..., 0) = 0`. In the general API its image has rank 0 and
@@ -530,7 +597,7 @@ an image element has an empty coordinate vector, which is the correct answer.
 Only the rank-one scalar convenience API of `PatentVal` has nothing to return,
 and it reports `TrivialImage` rather than pretending the answer is zero.
 
-## D39. Rank-0 bases are permitted
+## D46. Rank-0 bases are permitted
 
 A basis with no generators spans the trivial lattice. Nothing breaks, and
 rejecting it would be an invented restriction.
@@ -547,12 +614,10 @@ rejecting it would be an invented restriction.
   does not verify one. Verification is out of scope until there is a
   certificate format to verify against; the contract is declared metadata, as
   section 1.1.2 requires, and is never inferred.
-- `ProvenanceId` exists without the record arena it refers to.
-- The native container of UMT-3.2 section 8.8 does not exist yet: the pieces
-  it will assemble - the schema version, the exact text codec, the reference
-  forms - are in place, but nothing writes a whole document.
-- `ProvenanceRecord` and its arena are not implemented, so `ProvenanceId`
-  currently points at nothing.
+- The native container of UMT-3.2 section 8.8 does not exist yet: the pieces it
+  will assemble - the schema version, the exact text codec, the reference
+  forms, the provenance arena - are in place, but nothing writes a whole
+  document.
 - `TheoryContext` registers bases, ambient lattices, and mappings. Named
   representative policies, tunings, and notation systems join it as those
   layers arrive.
@@ -560,3 +625,6 @@ rejecting it would be an invented restriction.
   intermediate entries can grow well beyond the input size. Exactness is never
   at risk, since every entry is a `Z`, but a modular or fraction-free variant
   would be wanted before large matrices become common.
+- `PerformancePlan` resolves voices to `u16` indices but does not yet carry the
+  `DeviceAdapterProfile` that produced them. Pairing the two is what the device
+  stage will do.

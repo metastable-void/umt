@@ -825,3 +825,102 @@ pub enum PatentValError {
     #[error(transparent)]
     Temperament(#[from] TemperamentError),
 }
+
+/// A realization record, residual, provenance record, or performance plan was
+/// rejected.
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+#[non_exhaustive]
+pub enum RealizationError {
+    /// Two residuals of different kinds were added.
+    ///
+    /// UMT-3.2 section 7.9: residuals "MUST NOT be added numerically unless
+    /// they live in compatible spaces and the addition is mathematically
+    /// meaningful".
+    #[error("residuals of kind {left:?} and {right:?} live in different spaces")]
+    IncompatibleResiduals {
+        /// The left operand's kind.
+        left: crate::realization::residual::ResidualKind,
+        /// The right operand's kind.
+        right: crate::realization::residual::ResidualKind,
+    },
+
+    /// Two residuals of a kind this crate declines to add were added.
+    ///
+    /// An empirical fit would need a declared model for combining its
+    /// uncertainties; a device-control residual is a pair of encoded values;
+    /// a notation residual is symbolic. Refusing beats inventing a
+    /// convention.
+    #[error("residuals of kind {kind:?} are not additive")]
+    NonAdditiveResidual {
+        /// The offending kind.
+        kind: crate::realization::residual::ResidualKind,
+    },
+
+    /// A residual value was not finite.
+    #[error("a residual must be finite")]
+    NonFiniteResidual,
+
+    /// An uncertainty was negative or not finite.
+    #[error("an uncertainty must be non-negative and finite")]
+    InvalidUncertainty,
+
+    /// A provenance record did not name an algorithm and a version.
+    ///
+    /// UMT-3.2 section 7.10 requires provenance "sufficient to identify the
+    /// semantic profile, algorithm/version, and parameters"; a record without
+    /// them cannot.
+    #[error("provenance record `{id}` does not identify its algorithm and version")]
+    AnonymousProvenance {
+        /// The offending identifier.
+        id: crate::realization::provenance::ProvenanceId,
+    },
+
+    /// A provenance identifier was reused for a different record.
+    #[error("`{id}` is already registered as a different provenance record")]
+    DuplicateProvenance {
+        /// The reused identifier.
+        id: crate::realization::provenance::ProvenanceId,
+    },
+
+    /// A provenance identifier is not in the arena.
+    #[error("no provenance record registered under `{id}`")]
+    UnknownProvenance {
+        /// The unresolved identifier.
+        id: crate::realization::provenance::ProvenanceId,
+    },
+
+    /// A realization record ran backwards through the pipeline.
+    ///
+    /// Backward paths exist but are type-specific: UMT-3.2 section 7.1
+    /// explicitly rejects the claim that every adjacent pair is the same kind
+    /// of lens.
+    #[error("a realization record cannot run backwards, from {entry} to {exit}")]
+    BackwardRealization {
+        /// The entry layer.
+        entry: crate::realization::record::Layer,
+        /// The exit layer.
+        exit: crate::realization::record::Layer,
+    },
+
+    /// A planned tick fell outside the validated range.
+    #[error("tick {tick} is outside the range a performance plan may reference")]
+    TickOutOfRange {
+        /// The offending tick.
+        tick: u64,
+    },
+
+    /// A planned pitch fell outside the validated range.
+    #[error("{millicents} millicents is outside the range a performance plan may reference")]
+    PitchOutOfRange {
+        /// The offending pitch.
+        millicents: i32,
+    },
+
+    /// A performance plan was given a zero tick resolution.
+    #[error("a performance plan needs a positive tick resolution")]
+    ZeroResolution,
+
+    /// An underlying temperament operation failed.
+    #[error(transparent)]
+    Temperament(#[from] TemperamentError),
+}

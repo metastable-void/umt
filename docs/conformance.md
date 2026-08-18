@@ -118,6 +118,9 @@ UMT-3.2 section 9.1 and prompt section 47 laws currently exercised, in
 | Section 5.2.2 tie relations | `a_tie_chain_yields_one_gesture_and_loses_no_notehead` |
 | Section 6.6 transformation composition | `score_transformations_compose_associatively`, `composed_time_transformations_agree_with_applying_them_in_turn` |
 | Section 9.6 tie identities survive a round trip | `tests/serialization.rs::score_objects_round_trip_and_revalidate` |
+| Section 7.9 residual taxonomy | the unit tests in `src/realization/residual.rs` |
+| Section 7.10 provenance | the unit tests in `src/realization/provenance.rs` |
+| Section 7.4 round-trip justification | the unit tests in `src/realization/record.rs` |
 
 P8 to P11 run against four mapping shapes - surjective, non-surjective, the
 zero map, and rank 2 - so the degenerate cases are covered rather than assumed
@@ -159,6 +162,15 @@ else, and `RatioConstraint` cross-multiplies into `LinearConstraint`, which
 `StpProblem` has no method for. The separation is in the types, not in a
 runtime check that could be bypassed.
 
+Section 9.12 is the third law group of this kind. Its five clauses are about
+what a realization is allowed to discard and what it must record, and they
+land on types rather than on discipline: `Residual` has seven variants in
+genuinely different spaces with no `Add` between them, `ResidualSet::of_kind`
+keeps them apart, `ResidualRecord::has_provenance` and
+`RealizationRecord::is_attributable` report whether a result is fit to support
+a conformance decision, and `RoundTripBasis` admits only the two
+justifications section 7.4 allows for a losslessness claim.
+
 Section 6.6 gets the same treatment as 9.5, and for the same reason. It
 forbids the label "functorial" without identity transformations, composition
 of event relations, composition of pitch components, composition of temporal
@@ -174,8 +186,7 @@ prompt section 55, and generated sets are a later stage.
 
 ## Examples
 
-Prompt section 49 requires executable examples. Five of the six are possible at
-this stage:
+Prompt section 49 requires executable examples. All six now exist:
 
 | Example | Subject | File |
 |---|---|---|
@@ -184,7 +195,7 @@ this stage:
 | 3 | Adaptive lift selection | `examples/adaptive_lift.rs` |
 | 4 | Quintuplet quantization | `examples/quintuplet_quantization.rs` |
 | 5 | Unmeasured event | `examples/unmeasured_event.rs` |
-| 6 | Performance compilation | pending, needs the device layer |
+| 6 | Performance compilation | `examples/performance_compilation.rs` |
 
 Example 1 stops short of the regular tuning its prompt text mentions, because
 tuning is an L3 map and belongs to a later stage; everything else in it is
