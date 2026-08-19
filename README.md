@@ -7,7 +7,14 @@ choice made explicit.
 
 ## Status
 
-Every part of UMT-3.2 is implemented except part III, generated structures.
+**Every part of UMT-3.2 is implemented, and all thirty-five of its mandatory
+adversarial fixtures pass.**
+
+Two things are absent on purpose rather than pending: L0 pitch spelling
+(section 4.5), which prompt section 55 defers out of a first release, and
+external adapters other than Scala `.scl` (sections 8.4 to 8.7), which prompt
+section 40 puts behind native serialization. `docs/conformance.md` states
+precisely what the fixture results do and do not license.
 
 Implemented: the proportion lattice; exact integer matrices with Smith and
 canonical Hermite normal forms; free lattices and quotients; regular
@@ -25,18 +32,16 @@ profile; three separate temporal-constraint solver profiles; an event-indexed
 score with scoped events, ties that are relations rather than merges, and
 transformations that claim compositionality only when they have it; an
 immutable theory context with reference-based serialization; a typed residual
-taxonomy with structured provenance in an arena; and a compiled, bounded
+taxonomy with structured provenance in an arena; a compiled, bounded
 performance plan whose realtime contract is a checkable value; directly
-measured L3 scales that need no lattice explanation; the native document
-container; and a Scala `.scl` adapter that keeps each entry in its own layer.
+measured L3 scales that need no lattice explanation; modular generated sets
+with the three-gap hypotheses recorded and Euclidean rhythms whose evenness is
+verified; the native document container; and a Scala `.scl` adapter that keeps
+each entry in its own layer.
 
-**Thirty-four of the thirty-five UMT-3.2 fixtures pass**, and all six of the
-implementation prompt's mandatory examples run. The one remaining, F35, needs
-the generated-set machinery of part III. See `docs/architecture.md` for the
-staging plan and `docs/conformance.md` for the fixture matrix.
-
-This crate does not yet claim UMT-3.2 conformance. Conformance is claimed only
-when the applicable mandatory fixture suite passes.
+All six of the implementation prompt's mandatory examples run, plus two
+supplementary ones. See `docs/architecture.md` for the module map and
+`docs/conformance.md` for the fixture matrix and law coverage.
 
 ## Example
 
@@ -240,6 +245,46 @@ let gestures = score.sounding_gestures()?;
 assert_eq!(gestures.len(), 1);
 assert_eq!(gestures[0].sources(), &[EventId::new("n1"), EventId::new("n2")]);
 assert_eq!(gestures[0].span().duration(), Beats::ratio(4, 1)?);
+# Ok::<(), Box<dyn core::error::Error>>(())
+```
+
+A generated scale stores its period and generator as *designated data*, because
+a rank-2 temperament does not say which is which. The MOS predicate is
+operational and its hypotheses are recorded (fixture F35):
+
+```rust
+use umt::generated::{
+    GeneratedSet, GeneratorRatio, MosProfile, quarter_comma_meantone_generator,
+};
+use umt::pitch::Cents;
+
+let scale = GeneratedSet::from_cents(
+    Cents::new(1200.0)?,
+    quarter_comma_meantone_generator(),
+    3,
+    // Whether g/p is rational cannot be decided from two doubles, so it is
+    // declared rather than guessed.
+    GeneratorRatio::Irrational,
+)?;
+
+// Three points, two gap sizes: cardinality 3 is MOS.
+let report = scale.gap_report();
+assert_eq!(report.distinct(), 3);
+assert_eq!(report.distinct_sizes().len(), 2);
+assert!(scale.mos_verdict(MosProfile::TwoStepSizes).is_mos());
+assert!(report.satisfies_three_gap_bound());
+
+// The MOS cardinalities are computed, not quoted.
+assert_eq!(
+    scale.mos_cardinalities(31, MosProfile::TwoStepSizes)?,
+    [2, 3, 5, 7, 12, 19, 31]
+);
+
+// And the intervening cardinalities are still generated scales - they just
+// have three gap sizes rather than two.
+let four = scale.at_cardinality(4)?;
+assert_eq!(four.sorted_distinct_points().len(), 4);
+assert!(!four.mos_verdict(MosProfile::TwoStepSizes).is_mos());
 # Ok::<(), Box<dyn core::error::Error>>(())
 ```
 

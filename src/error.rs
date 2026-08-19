@@ -284,6 +284,13 @@ pub enum TimeError {
     #[error("structural span runs backwards")]
     ReversedBeatSpan,
 
+    /// A span was given a negative length in ticks.
+    ///
+    /// A span of negative length is not a span. Allocating children within one
+    /// would produce negative durations that sum correctly and mean nothing.
+    #[error("a span cannot have a negative length")]
+    NegativeSpan,
+
     /// A rhythm-tree weight was not strictly positive
     /// (UMT-3.2 section 5.3.1).
     #[error("rhythm-tree child weights must be strictly positive")]
@@ -993,4 +1000,42 @@ pub enum IoError {
         /// What was wrong.
         reason: String,
     },
+}
+
+/// A generated set or Euclidean rhythm was rejected.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum GeneratedError {
+    /// A period was zero or negative.
+    #[error("a generated set needs a strictly positive period")]
+    NonPositivePeriod,
+
+    /// A cardinality or pulse count was zero.
+    ///
+    /// UMT-3.2 section 3.1 defines the construction for `n >= 1`, and section
+    /// 3.5 for `0 < k <= n`.
+    #[error("a generated structure needs at least one element")]
+    EmptyCardinality,
+
+    /// More onsets than pulses were requested.
+    #[error("cannot distribute {onsets} onsets among {pulses} pulses")]
+    TooManyOnsets {
+        /// Onsets requested.
+        onsets: u32,
+        /// Pulses available.
+        pulses: u32,
+    },
+
+    /// A mode or rotation index fell outside the pattern.
+    #[error("degree {degree} is outside a pattern of {steps} steps")]
+    DegreeOutOfRange {
+        /// The offending index.
+        degree: usize,
+        /// How many steps the pattern has.
+        steps: usize,
+    },
+
+    /// A gap-comparison tolerance was negative or not finite.
+    #[error("a gap tolerance must be non-negative and finite")]
+    InvalidTolerance,
 }

@@ -2,10 +2,21 @@
 
 UMT-3.2 section 9.13 fixtures mapped to tests (prompt section 46).
 
-**This crate does not claim UMT-3.2 conformance.** Conformance is claimed only
-when the applicable mandatory fixture suite passes in full. Fixtures whose
-machinery does not exist yet are marked `pending` and have no test, rather than
-a stub that could be mistaken for a pass.
+Every fixture of the mandatory adversarial suite passes. What that does and
+does not license is worth stating precisely, because section 0.3 forbids
+silently claiming conformance to unimplemented laws.
+
+**What is established.** All thirty-five section 9.13 fixtures pass, every law
+group of part IX that has a testable subject is exercised, and no test is a
+stub. The profiles this crate implements are listed in
+`io::document::SUPPORTED_PROFILES`, and a document declaring anything else is
+reported as not fully understood rather than accepted.
+
+**What is not.** L0 pitch spelling (section 4.5) is deliberately unimplemented,
+so the notation laws of section 9.6 that concern spelling are out of scope for
+this release; a profile claiming them would be claiming something this crate
+does not do. External adapters other than Scala `.scl` are likewise absent, and
+section 8.1 requires each to declare its own profile when it arrives.
 
 Status values:
 
@@ -50,17 +61,16 @@ Status values:
 | F32 | Reciprocal rate and duration orientation | pass | `tests/conformance.rs::f32_reciprocal_rate_and_duration_orientation` |
 | F33 | Saturation excludes the zero multiplier | pass | `tests/conformance.rs::f33_saturation_excludes_the_zero_multiplier` |
 | F34 | Group length versus lattice norm | pass | `tests/conformance.rs::f34_group_length_versus_lattice_norm` |
-| F35 | Three-note quarter-comma-meantone MOS | pending | needs generated sets |
+| F35 | Three-note quarter-comma-meantone MOS | pass | `tests/conformance.rs::f35_three_note_quarter_comma_meantone_mos` |
 
-Thirty-four of the thirty-five fixtures pass; none is partial. The one
-remaining, F35, needs the generated-set machinery of part III.
+**All thirty-five fixtures pass, and none is partial.**
 
 Some fixtures are gated on a feature, because their obligations are
 specifically about an encoding: F9, F20, and F29 need `serde`, and F21 needs
 `scala`. The rest of each fixture's subject matter is covered by unit tests
 that run under any feature set.
 
-Four of them are worth naming, because all four are easy to claim loosely.
+Five of them are worth naming, because all five are easy to claim loosely.
 
 F20's obligations are discharged in full: the trajectory survives a native
 round trip through `PitchTrajectoryRef` *exactly*, not to within a tolerance,
@@ -80,6 +90,12 @@ would be easy. The two noteheads and the tie relation survive in the score;
 `Score::sounding_gestures` produces one sustained gesture *and* keeps both
 source identities inside it; and a native round trip reconstructs a score equal
 to the original, with two events rather than one merged note.
+
+F35 is checked by computing section 3.3's MOS list rather than quoting it. The
+test asserts the cardinalities `2, 3, 5, 7, 12, 19, 31` come out of the
+predicate, that 3 is among them - section 3.3 says its inclusion is
+intentional - and that the intervening cardinalities are still generated
+scales, with three gap sizes rather than two.
 
 F29 is about an *absence*. The test asserts not merely that a document with no
 basis and no unit validates, but that the JSON contains no `basis` and no
@@ -135,6 +151,10 @@ UMT-3.2 section 9.1 and prompt section 47 laws currently exercised, in
 | Section 8.1 adapter declarations | `the_adapter_declares_all_five_things_section_8_1_asks_for` in `src/io/scala.rs` |
 | Section 8.8 optional container sections | `f29_direct_empirical_object_without_a_unit` |
 | Section 8.9 serialization invariants | `tests/serialization.rs` |
+| Section 3.2 three-gap hypotheses | `circular_gaps_partition_the_period_within_the_three_gap_bound` |
+| Section 3.4 modes are rotations | `modes_are_rotations_of_the_step_pattern` |
+| Section 9.11 generated-set laws | `generated_sets_preserve_their_designated_data` |
+| Section 9.11 Euclidean maximal evenness | `euclidean_rhythms_are_maximally_even`, `a_declared_rotation_preserves_evenness` |
 
 P8 to P11 run against four mapping shapes - surjective, non-surjective, the
 zero map, and rank 2 - so the degenerate cases are covered rather than assumed
@@ -194,9 +214,10 @@ answer, exactly when a component is application-declared and therefore does not
 compose. `claims_compositional` reports which case a given transformation is
 in.
 
-The remaining notation laws of section 9.6 are not yet applicable: L0 spelling
-is deliberately deferred by prompt section 55. The generated-structure laws of
-section 9.11 are the last outstanding group, and arrive with part III.
+Every law group of part IX is now exercised except the parts of section 9.6
+that concern L0 spelling, which prompt section 55 defers out of the first
+release. Tie identity, the one section 9.6 law the score layer does reach, is
+covered.
 
 ## Examples
 
@@ -215,11 +236,12 @@ Example 1 stops short of the regular tuning its prompt text mentions, because
 tuning is an L3 map and belongs to a later stage; everything else in it is
 exact.
 
-One supplementary example beyond the prompt's list:
+Two supplementary examples beyond the prompt's list:
 
 | Example | Subject | File |
 |---|---|---|
 | - | Voice leading: declared cost, family minimum, unequal counts | `examples/voice_leading.rs` |
+| - | Generated sets, MOS cardinalities, Euclidean rhythms | `examples/generated_scales.rs` |
 
 It takes a voice exchange, where the declared leading moves two voices by a
 fifth each and the minimum over relabellings is zero. Both numbers are

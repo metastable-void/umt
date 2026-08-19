@@ -187,8 +187,9 @@ impl TickGrid {
     ///
     /// # Errors
     ///
-    /// Returns [`TimeError::EmptyDivision`] for no children and
-    /// [`TimeError::NonPositiveWeight`] for a non-positive weight.
+    /// Returns [`TimeError::EmptyDivision`] for no children,
+    /// [`TimeError::NonPositiveWeight`] for a non-positive weight, and
+    /// [`TimeError::NegativeSpan`] for a parent of negative length.
     pub fn allocate_locally(
         self,
         weights: &[Q],
@@ -196,6 +197,9 @@ impl TickGrid {
         convention: RoundingConvention,
     ) -> Result<GridAllocation, TimeError> {
         let total = validate_weights(weights)?;
+        if parent_ticks.is_negative() {
+            return Err(TimeError::NegativeSpan);
+        }
         let parent = Q::from(parent_ticks.clone());
 
         let children = weights
@@ -231,8 +235,9 @@ impl TickGrid {
     ///
     /// # Errors
     ///
-    /// Returns [`TimeError::EmptyDivision`] for no children and
-    /// [`TimeError::NonPositiveWeight`] for a non-positive weight.
+    /// Returns [`TimeError::EmptyDivision`] for no children,
+    /// [`TimeError::NonPositiveWeight`] for a non-positive weight, and
+    /// [`TimeError::NegativeSpan`] for a parent of negative length.
     pub fn allocate_preserving_endpoint(
         self,
         weights: &[Q],
@@ -240,13 +245,18 @@ impl TickGrid {
         policy: &AllocationPolicy,
     ) -> Result<AllocationOutcome, TimeError> {
         let total = validate_weights(weights)?;
+        if parent_ticks.is_negative() {
+            return Err(TimeError::NegativeSpan);
+        }
         let parent = Q::from(parent_ticks.clone());
         let convention = policy.convention;
 
         // Feasibility first: the declared minimum cannot be met if the parent
-        // is too short, and no rounding policy can rescue that.
+        // is too short, and no rounding policy can rescue that. A minimum of
+        // zero declares no minimum, so it can never be the reason for an
+        // infeasible allocation.
         let required = &policy.minimum_ticks * Z::from(weights.len());
-        if required > *parent_ticks {
+        if policy.minimum_ticks.is_positive() && required > *parent_ticks {
             let infeasibility = AllocationInfeasibility::MinimumSpan {
                 children: weights.len(),
                 required_ticks: required,

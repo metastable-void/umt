@@ -655,6 +655,21 @@ Flattening to a uniform L3 scale is available through `to_empirical_scale`, and
 it returns a `ResidualSet` with one notation residual per exact entry it
 flattened. The loss is reported, which is law 2 of section 9.12.
 
+## D56. No lazy caches, on purpose
+
+Prompt section 50 lists candidate caches - normal forms, kernel and image
+bases, coordinate transformations, valuations, fingerprints - and this crate
+adds none of them. D9 records why: derived structure is computed eagerly in the
+validating constructor, which keeps the types free of interior mutability,
+keeps them `Send + Sync` without a `std`-only `OnceLock`, and guarantees
+equality can never depend on cache state.
+
+The cost is visible in `cargo bench`: constructing a `TemperamentMap` pays for
+one Smith and one Hermite normal form even if the caller only wanted to apply
+it. For a type whose whole purpose is to expose that structure, that is the
+right trade. A context-owned cache keyed by mapping identity remains available
+later without changing any semantics, which is the shape section 50 suggests.
+
 ## Known limitations
 
 - A generator cannot currently carry both an exact rational valuation and a
@@ -676,9 +691,10 @@ flattened. The loss is reported, which is law 2 of section 9.12.
 - The Scala adapter reads and writes `.scl` only. Keyboard mappings (`.kbm`,
   section 8.3) are a separate object the format keeps separate, and are not
   implemented.
-- Part III generated structures - modular generated sets, three-gap behaviour,
-  MOS profiles, Euclidean rhythms - are the one remaining unimplemented part of
-  the specification.
+- `GeneratedSet` works in `f64`, because part III is defined in an ordered
+  additive realization space rather than an exact one. A caller who wants an
+  exact generated set over a rational period and generator would want a
+  parallel exact type; nothing about the API shape prevents adding one.
 - Smith normal form uses the textbook pivot-and-reduce algorithm, whose
   intermediate entries can grow well beyond the input size. Exactness is never
   at risk, since every entry is a `Z`, but a modular or fraction-free variant
@@ -686,3 +702,68 @@ flattened. The loss is reported, which is law 2 of section 9.12.
 - `PerformancePlan` resolves voices to `u16` indices but does not yet carry the
   `DeviceAdapterProfile` that produced them. Pairing the two is what the device
   stage will do.
+
+## D51. The generator-to-period ratio is declared, never inferred **binding**
+
+`GeneratorRatio` is a stored field with `Rational`, `Irrational`, and
+`Undeclared` variants. UMT-3.2 section 3.2 requires anything claiming a
+three-gap result to record whether `g/p` is rational, and no finite computation
+on two `f64` values can decide that.
+
+`Undeclared` makes no closure claim at all. When a declaration and the
+arithmetic disagree - a "rational" ratio whose orbit does not close where the
+denominator says, or an "irrational" one that produces duplicates -
+`GapReport::closure_matches_declaration` reports the disagreement rather than
+silently preferring one of them.
+
+## D52. There is no well-formedness predicate
+
+Section 3.3 permits one and requires the exact definition to be declared,
+warning against treating "well-formed" and "two gap sizes" as interchangeable
+labels. `GeneratedSet::mos_verdict` is the operational two-gap predicate under
+a named `MosProfile`, and nothing here is called well-formed.
+
+Adding one would mean choosing among several incompatible definitions from a
+historically specific literature. The honest way to offer it is with the
+definition attached, which is work for whoever needs a particular one.
+
+## D53. Maximal evenness is verified, not inferred from the formula
+
+`EuclideanRhythm::onset_positions` generates onsets at `floor(i n / k)`, which
+is maximally even by construction. `verify_maximal_evenness` nevertheless
+checks the Clough-Douthett characterisation against the produced positions: for
+every `m` from 1 to `k - 1`, the circular distances between onsets `m` apart
+take at most two values differing by exactly one pulse.
+
+Section 9.11 requires an implementation to "verify maximal evenness under the
+selected definition", and a construction that is even by argument is not a
+verification. The property test runs it over every `E(k, n)` up to 48 pulses.
+
+## D54. Gap comparison uses a declared tolerance
+
+Generated points are computed in `f64`, so gaps that are equal in exact
+arithmetic differ in their low bits. `DEFAULT_GAP_TOLERANCE` is `1e-9` octaves,
+about a millionth of a cent: wide enough to absorb that and far too narrow to
+merge sizes that are genuinely different. It is configurable per set, and the
+value used is recorded on every `GapReport`.
+
+This is the one place in the crate where a structural conclusion - how many
+distinct step sizes a scale has - rests on a floating-point comparison. It does
+so because part III is defined in "an ordered additive realization space",
+which is L3; the tolerance is therefore a declared parameter of the result
+rather than an implementation detail.
+
+## D55. A negative parent span is refused, not allocated into
+
+`TickGrid::allocate_locally` and `allocate_preserving_endpoint` reject a
+negative `parent_ticks` with `TimeError::NegativeSpan`. A span of negative
+length is not a span, and allocating children within one would produce
+negative durations that sum correctly and mean nothing.
+
+This was found by `tests/robustness.rs`, which also exposed the related defect
+it replaced: with the default policy - minimum span zero - the feasibility
+check `required > parent` fired for any negative parent and reported
+`MinimumSpan { required_ticks: 0, available_ticks: -4 }`. Nothing required zero
+ticks and failed to get them, so the reason was nonsense even though the
+refusal happened to be right. The check is now guarded on the minimum actually
+being positive, and the input is validated where it should have been.

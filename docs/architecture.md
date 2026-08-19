@@ -11,7 +11,7 @@ convenience.
 | L0 notation | spelled symbols, ties, tuplet brackets | `score` (ties and event structure); spelling deferred |
 | L1 exact structure | monzos, exact ratios, rational durations | `algebra`, `proportion`, `time::beat` |
 | L2 structural quotient | tempered classes, image lattices, meter | `temperament`, `pitch::{chord, voice_leading}`, `time::{rhythm, meter}` |
-| L3 metric realization | log-frequency, tuning curves, tempo maps | `pitch::{units, tuning, trajectory}`, `time`, `realization` |
+| L3 metric realization | log-frequency, tuning curves, tempo maps | `pitch::{units, tuning, trajectory, empirical}`, `time`, `realization`, `generated` |
 | L4 device realization | ticks, MIDI, control words | `time::quantize`, `realization::plan`, `pitch::trajectory::SampledTrajectory` |
 
 ## Present modules
@@ -43,6 +43,9 @@ src/
     empirical.rs          EmpiricalScale, LatticeFit - measured L3 scales
     voice_leading.rs      VoiceLeading span, span cost, chord distance profiles
     trajectory.rs         Deviation, PitchTrajectory, sampling and its record
+  generated/
+    scale.rs              GeneratedSet, three-gap report, MOS predicate
+    euclidean.rs          EuclideanRhythm, verified maximal evenness
   score/
     id.rs                 EventId, StaffId, PartId, EventScope
     event.rs              TemporalPlacement, EventContent, ScoreEvent
@@ -86,21 +89,22 @@ accessors (`image_generator`, `image_coordinate`, `embed_image`) are views of
 the general machinery that are meaningful only because the ambient rank is 1;
 `PatentVal::map` reaches the general object.
 
-## Planned modules
+## What is deliberately absent
 
-Following the staging of the implementation prompt, in order:
+Every part of UMT-3.2 is implemented. Two things are absent on purpose rather
+than pending:
 
-1. Generated structures (part III, F35): modular generated sets, three-gap
-   behaviour, MOS and well-formed profiles, modes and rotations, Euclidean
-   rhythms. Independent of everything else, and the last outstanding stage.
-
-Further external adapters - MusicXML, MEI, MIDI, MNX, and Scala `.kbm` - are
-deliberately out of scope for the first release (prompt section 40). The
-internal model is shaped so they can be added behind features later, and
-`io::scala::AdapterProfile` is the declaration shape each of them will use.
-
-Deliberately deferred: pitch notation at L0 (section 4.5), because prompt
-section 55 says not to overbuild notation in v1.
+- **L0 pitch spelling** (section 4.5). Prompt section 55 says not to overbuild
+  notation in v1, and a spelling system is a large orthographic model whose
+  shape depends on which notation traditions it must serve. Ties, event
+  structure, and the enharmonic *mechanism* - a spelling's comma residue
+  against a canonical lift - are all present; only the letter-and-accidental
+  layer is not.
+- **External adapters other than Scala `.scl`** (sections 8.4 to 8.7). Prompt
+  section 40 says the first release does not need them and that native
+  serialization is the higher priority. The internal model is shaped so each
+  can be added behind a feature, and `io::scala::AdapterProfile` is the
+  declaration shape section 8.1 requires of every one of them.
 
 ## Why the normal forms are what they are
 
@@ -129,9 +133,7 @@ comparison first and a full structural comparison second, which keeps the
 guarantee sound for handles rebuilt from serialized data.
 
 The registry that maps a serialized `BasisId` back to a shared handle is the
-`TheoryContext` of prompt section 8; it arrives with the general temperament
-map, and until then serialization is limited to self-contained definition
-objects.
+`TheoryContext` of prompt section 8.
 
 ## Why voice leading is four types instead of one function
 
@@ -283,6 +285,7 @@ cargo test
 cargo build --no-default-features --features serde,scala --target x86_64-unknown-none
 cargo clippy --no-default-features --target x86_64-unknown-none -- -D warnings
 RUSTDOCFLAGS="-D warnings" cargo doc --all-features --no-deps
+cargo bench
 ```
 
 The second and fifth lines matter more than they look. A test suite that only
@@ -294,3 +297,71 @@ making the whole suite depend on one.
 The bare-metal line is not decoration either: it is the only check that catches
 a dependency feature silently pulling `std` back in through feature
 unification. A host build cannot detect that.
+
+## Why generated sets and Euclidean rhythms are separate types
+
+They share modular arithmetic, balance properties, and continued-fraction
+structure, and section 3.5 explicitly permits common algorithms for modular
+distribution. It then says, in bold, that UMT-3.2 "does **not** identify every
+MOS construction with every Euclidean-rhythm construction as the same theorem
+or the same object".
+
+So `GeneratedSet` and `EuclideanRhythm` are separate types with no conversion
+between them. `GeneratedSet` works in a real ordered realization space with a
+declared period and generator; `EuclideanRhythm` works in `Z_n` with integer
+onsets. What they compute is analogous, and the objects are not the same.
+
+Two smaller decisions follow the same instinct:
+
+- `GeneratorRatio` is **declared**, not inferred. Whether `g/p` is rational
+  cannot be decided from two `f64` values, and section 3.2 requires the answer
+  to be recorded by anything claiming a three-gap result. An `Undeclared` ratio
+  makes no closure claim at all, and `GapReport::closure_matches_declaration`
+  reports when a declaration and the arithmetic disagree instead of silently
+  preferring one.
+- There is **no well-formedness predicate**. Section 3.3 permits one but
+  requires the exact definition to be declared, and warns against treating
+  "well-formed" and "two gap sizes" as interchangeable. `mos_verdict` is the
+  operational two-gap predicate under a named `MosProfile`; anyone needing a
+  particular well-formedness definition should attach it to their own type.
+
+## Benchmarks and what they say
+
+`cargo bench` runs `benches/core.rs`, a plain timing harness over the
+operations prompt section 50 names. There is no benchmarking framework: the
+crate's dependency policy is "as few as possible, all pure Rust", and section
+50 asks for numbers on a named list rather than for statistics. The numbers are
+indicative, meant to catch an order-of-magnitude regression.
+
+What they show, on a typical host:
+
+- monzo addition is under 100 ns and image membership around 120 ns, so the
+  hot path of temperament work is cheap;
+- a Smith normal form of a small matrix is a few microseconds, and
+  `TemperamentMap::from_rows` is dominated by it - which is the cost of D9's
+  decision to compute derived structure eagerly, paid once per mapping;
+- rhythm-tree flattening and grid allocation are tens of microseconds for
+  scales of tens of leaves, essentially all of it arbitrary-precision rational
+  arithmetic and its allocation.
+
+That last line is the whole trade. Exact structural time costs roughly two
+orders of magnitude over `f64`, and buys a quintuplet inside a triplet that
+closes exactly. Anything needing the speed compiles a `PerformancePlan`, where
+every value is a bounded integer and reads are borrowed slices.
+
+Section 50 also lists caches. D9 records the decision *not* to add them: derived
+structure is computed eagerly in the validating constructor, which keeps the
+types free of interior mutability, keeps them `Send + Sync` without a
+`std`-only `OnceLock`, and guarantees equality can never depend on cache state.
+
+## Robustness
+
+`tests/robustness.rs` covers prompt section 48's requirement that untrusted
+input never panic. It is a deterministic stand-in for a fuzzer: a seeded
+xorshift generator drives each parser over tens of thousands of malformed
+inputs, alongside hand-written adversarial cases - empty files, zero
+denominators, 400-digit integers, 300-deep rhythm trees, dense constraint
+graphs with negative cycles, and grids at `u32::MAX`.
+
+Every failing case is reproducible from the test name alone, because the seeds
+are constants and nothing reads a clock.

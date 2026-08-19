@@ -10,10 +10,11 @@ use std::sync::Arc;
 use proptest::prelude::*;
 use umt::algebra::integer::round_n_log2;
 use umt::algebra::normal_form::{HermiteNormalForm, SmithNormalForm};
+use umt::generated::{EuclideanRhythm, GeneratedSet, GeneratorRatio, RotationConvention};
 use umt::pitch::{
-    AdmissibleFamily, Chord, ChordDistance, CostQuestion, Edge, LogFrequency, LogPitchDistance,
-    MetricClaim, Octaves, PitchOrigin, PitchPoint, RegularTuning, SpanCostModel, SpanPenalties,
-    TransportProfile, VoiceId, VoiceLeading, VoiceSet,
+    AdmissibleFamily, Cents, Chord, ChordDistance, CostQuestion, Edge, LogFrequency,
+    LogPitchDistance, MetricClaim, Octaves, PitchOrigin, PitchPoint, RegularTuning, SpanCostModel,
+    SpanPenalties, TransportProfile, VoiceId, VoiceLeading, VoiceSet,
 };
 use umt::realization::provenance::ProvenanceId;
 use umt::score::{
@@ -1167,6 +1168,176 @@ proptest! {
             Beats::ratio(durations.iter().sum::<i64>(), 1).unwrap()
         );
         prop_assert_eq!(gestures[0].is_tied(), durations.len() > 1);
+    }
+
+    /// UMT-3.2 section 9.11: a generated set preserves its designated period
+    /// and generator, handles duplicates explicitly, and computes gaps from
+    /// sorted distinct points.
+    #[test]
+    fn generated_sets_preserve_their_designated_data(
+        period_cents in 600.0f64..2400.0,
+        generator_cents in 1.0f64..2399.0,
+        cardinality in 1usize..=40,
+    ) {
+        let period = Cents::new(period_cents).unwrap();
+        let generator = Cents::new(generator_cents).unwrap();
+        let scale = GeneratedSet::from_cents(
+            period,
+            generator,
+            cardinality,
+            GeneratorRatio::Undeclared,
+        )
+        .unwrap();
+
+        // The designated data survive verbatim.
+        prop_assert_eq!(scale.period(), Octaves::from(period));
+        prop_assert_eq!(scale.generator(), Octaves::from(generator));
+        prop_assert_eq!(scale.cardinality(), cardinality);
+
+        // Every generated point lies in [0, p).
+        for point in scale.points() {
+            prop_assert!(point >= Octaves::ZERO);
+            prop_assert!(point < scale.period(), "{point} is not below the period");
+        }
+
+        // Distinct points are sorted and strictly ascending.
+        let distinct = scale.sorted_distinct_points();
+        prop_assert!(distinct.windows(2).all(|pair| pair[0] < pair[1]));
+        prop_assert!(distinct.len() <= cardinality);
+
+        // Duplicates are accounted for rather than silently dropped.
+        let report = scale.gap_report();
+        prop_assert_eq!(report.generated(), cardinality);
+        prop_assert_eq!(report.distinct(), distinct.len());
+        prop_assert_eq!(report.duplicates(), cardinality - distinct.len());
+    }
+
+    /// UMT-3.2 section 3.2: the circular gaps sum to the period and their
+    /// number of distinct sizes never exceeds three.
+    #[test]
+    fn circular_gaps_partition_the_period_within_the_three_gap_bound(
+        generator_cents in 1.0f64..1199.0,
+        cardinality in 1usize..=60,
+    ) {
+        let scale = GeneratedSet::from_cents(
+            Cents::new(1200.0).unwrap(),
+            Cents::new(generator_cents).unwrap(),
+            cardinality,
+            GeneratorRatio::Undeclared,
+        )
+        .unwrap();
+
+        let gaps = scale.circular_gaps();
+        let report = scale.gap_report();
+        prop_assert_eq!(gaps.len(), report.distinct());
+
+        // The gaps tile the period.
+        let total: f64 = gaps.iter().map(|gap| gap.get()).sum();
+        prop_assert!((total - 1.0).abs() < 1e-9, "gaps sum to {total}");
+
+        // Every gap is positive, since the points were distinct.
+        prop_assert!(gaps.iter().all(|gap| gap.get() > 0.0));
+
+        // The Three-Gap Theorem's bound.
+        prop_assert!(
+            report.satisfies_three_gap_bound(),
+            "{} distinct sizes at n = {}",
+            report.distinct_sizes().len(),
+            cardinality
+        );
+    }
+
+    /// UMT-3.2 section 3.4: a mode is a rotation, so it permutes the step
+    /// pattern without changing its multiset.
+    #[test]
+    fn modes_are_rotations_of_the_step_pattern(
+        generator_cents in 1.0f64..1199.0,
+        cardinality in 1usize..=24,
+        degree in 0usize..24,
+    ) {
+        let scale = GeneratedSet::from_cents(
+            Cents::new(1200.0).unwrap(),
+            Cents::new(generator_cents).unwrap(),
+            cardinality,
+            GeneratorRatio::Undeclared,
+        )
+        .unwrap();
+        let pattern = scale.step_pattern();
+        prop_assume!(degree < pattern.len());
+
+        let mode = scale.mode(degree).unwrap();
+        prop_assert_eq!(mode.len(), pattern.len());
+
+        let mut sorted_pattern = pattern.clone();
+        let mut sorted_mode = mode.clone();
+        sorted_pattern.sort_unstable();
+        sorted_mode.sort_unstable();
+        prop_assert_eq!(sorted_pattern, sorted_mode);
+
+        // Rotating by zero is the identity, and rotating all the way round
+        // returns the original.
+        prop_assert_eq!(scale.mode(0).unwrap(), pattern);
+    }
+
+    /// UMT-3.2 sections 3.5 and 9.11: a Euclidean rhythm is maximally even
+    /// under the checked definition, and its gaps tile the cycle.
+    #[test]
+    fn euclidean_rhythms_are_maximally_even(
+        pulses in 1u32..=48,
+        onset_fraction in 1u32..=48,
+    ) {
+        let onsets = 1 + (onset_fraction - 1) % pulses;
+        let rhythm =
+            EuclideanRhythm::new(onsets, pulses, RotationConvention::FirstPulseOnset).unwrap();
+
+        // The declared count of onsets is what comes out.
+        let positions = rhythm.onset_positions();
+        prop_assert_eq!(positions.len(), onsets as usize);
+        prop_assert!(positions.windows(2).all(|pair| pair[0] < pair[1]));
+        prop_assert!(positions.iter().all(|position| *position < pulses));
+
+        // The gaps tile the cycle.
+        let gaps = rhythm.inter_onset_intervals();
+        prop_assert_eq!(gaps.iter().sum::<u32>(), pulses);
+        prop_assert!(gaps.iter().all(|gap| *gap >= 1));
+
+        // Maximal evenness, verified rather than assumed.
+        let report = rhythm.verify_maximal_evenness();
+        prop_assert!(
+            report.holds(),
+            "E({onsets}, {pulses}) had spread {}",
+            report.worst_spread()
+        );
+        prop_assert!(report.worst_spread() <= 1);
+    }
+
+    /// UMT-3.2 section 9.11: a declared rotation is a rotation - it moves the
+    /// pattern without changing its evenness or its multiset of gaps.
+    #[test]
+    fn a_declared_rotation_preserves_evenness(
+        pulses in 2u32..=32,
+        onset_fraction in 1u32..=32,
+        by in 0u32..32,
+    ) {
+        let onsets = 1 + (onset_fraction - 1) % pulses;
+        let by = by % pulses;
+        let plain =
+            EuclideanRhythm::new(onsets, pulses, RotationConvention::FirstPulseOnset).unwrap();
+        let rotated =
+            EuclideanRhythm::new(onsets, pulses, RotationConvention::RotatedBy(by)).unwrap();
+
+        prop_assert!(rotated.verify_maximal_evenness().holds());
+
+        let mut plain_gaps = plain.inter_onset_intervals();
+        let mut rotated_gaps = rotated.inter_onset_intervals();
+        plain_gaps.sort_unstable();
+        rotated_gaps.sort_unstable();
+        prop_assert_eq!(plain_gaps, rotated_gaps);
+
+        // And the conversion into the rhythm layer keeps the onsets.
+        let cyclic = rotated.to_cyclic_rhythm().unwrap();
+        let positions = rotated.onset_positions();
+        prop_assert_eq!(cyclic.onsets(), positions.as_slice());
     }
 
     /// Prompt section 10: the Smith normal form reconstructs its input, its

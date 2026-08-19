@@ -14,6 +14,7 @@ use std::sync::Arc;
 use umt::algebra::QuotientGroup;
 use umt::algebra::lattice::Sublattice;
 use umt::error::{ComplexityError, PitchError, ScoreError, TemperamentError, TimeError};
+use umt::generated::{GeneratedSet, GeneratorRatio, MosProfile, quarter_comma_meantone_generator};
 use umt::pitch::{
     AdmissibleFamily, Cents, Chord, ChordDistance, CostQuestion, EmpiricalDegree, EmpiricalScale,
     FitDeclaration, FrequencyHz, IndependenceClaim, LatticeFit, LogFrequency, LogPitchDistance,
@@ -1990,6 +1991,81 @@ fn f32_reciprocal_rate_and_duration_orientation() {
     assert_eq!(reoriented.rate_factor(), faster.rate_factor());
     assert_eq!(reoriented.duration_factor(), faster.duration_factor());
     assert_eq!(reoriented.reoriented(), faster);
+}
+
+/// F35 - three-note quarter-comma-meantone MOS.
+///
+/// Period `p = 1200` cents, generator `g = 300 log2(5) ~= 696.578` cents,
+/// three points modulo `p`, sorted. The circular gaps consist of two positive
+/// sizes, approximately 193.157 and 503.422 cents, so cardinality 3 satisfies
+/// the operational MOS predicate of UMT-3.2 section 3.3.
+#[test]
+fn f35_three_note_quarter_comma_meantone_mos() {
+    let period = Cents::new(1200.0).unwrap();
+    let generator = quarter_comma_meantone_generator();
+    assert!(
+        (generator.get() - 696.578_428_5).abs() < 1e-6,
+        "300 log2(5) cents, got {generator}"
+    );
+
+    // `g / p = log2(5) / 4` is irrational, and that is declared rather than
+    // inferred from two doubles (section 3.2).
+    let scale = GeneratedSet::from_cents(period, generator, 3, GeneratorRatio::Irrational).unwrap();
+    assert_eq!(scale.ratio(), &GeneratorRatio::Irrational);
+    assert_eq!(scale.ratio().orbit_closure(), None);
+
+    // Three points modulo the period, sorted.
+    let points: Vec<f64> = scale
+        .sorted_distinct_points()
+        .iter()
+        .map(|point| Cents::from(*point).get())
+        .collect();
+    assert_eq!(points.len(), 3);
+    assert!((points[0] - 0.0).abs() < 1e-6);
+    assert!((points[1] - 193.156_857_0).abs() < 1e-6, "{points:?}");
+    assert!((points[2] - 696.578_428_5).abs() < 1e-6, "{points:?}");
+
+    // The circular gaps are two positive sizes, as the fixture states.
+    let report = scale.gap_report();
+    let sizes: Vec<f64> = report
+        .distinct_sizes()
+        .iter()
+        .map(|size| Cents::from(*size).get())
+        .collect();
+    assert_eq!(sizes.len(), 2, "found {sizes:?}");
+    assert!((sizes[0] - 193.156_857_0).abs() < 1e-3, "{sizes:?}");
+    assert!((sizes[1] - 503.421_571_5).abs() < 1e-3, "{sizes:?}");
+    assert!(sizes.iter().all(|size| *size > 0.0), "both are positive");
+
+    // So cardinality 3 satisfies the operational MOS predicate.
+    let verdict = scale.mos_verdict(MosProfile::TwoStepSizes);
+    assert!(verdict.is_mos());
+    assert_eq!(verdict.profile(), MosProfile::TwoStepSizes);
+    assert_eq!(verdict.step_sizes().len(), 2);
+
+    // The four hypotheses section 3.2 requires a three-gap claim to record.
+    assert_eq!(report.cardinality(), 3);
+    assert_eq!(report.generated(), 3);
+    assert_eq!(report.distinct(), 3);
+    assert_eq!(report.duplicates(), 0);
+    assert_eq!(report.gaps().len(), 3);
+    assert!(report.satisfies_three_gap_bound());
+    assert!(report.closure_matches_declaration());
+
+    // Section 3.3: the inclusion of 3 is intentional, and the MOS list does
+    // not imply that generated scales at other cardinalities do not exist.
+    let mos = scale
+        .mos_cardinalities(31, MosProfile::TwoStepSizes)
+        .unwrap();
+    assert_eq!(mos, [2, 3, 5, 7, 12, 19, 31], "the section 3.3 list");
+    assert!(mos.contains(&3));
+    let four = scale.at_cardinality(4).unwrap();
+    assert_eq!(
+        four.sorted_distinct_points().len(),
+        4,
+        "the four-note generated scale exists; it is simply not MOS"
+    );
+    assert!(!four.mos_verdict(MosProfile::TwoStepSizes).is_mos());
 }
 
 /// Prompt section 13: mandatory equal-division cases.

@@ -8,6 +8,7 @@ extern crate alloc;
 pub mod algebra;
 pub mod context;
 pub mod error;
+pub mod generated;
 pub mod io;
 pub mod pitch;
 pub mod proportion;

@@ -48,6 +48,13 @@ libm = { version = "0.2", default-features = false }
 thiserror = { version = "2", default-features = false }
 serde = { version = "1", optional = true, default-features = false, features = ["alloc", "derive"] }
 
+[[bench]]
+name = "core"
+# No benchmarking framework: a plain harness keeps the dependency policy
+# intact, and prompt section 50 asks for numbers on a named list of
+# operations rather than for statistics.
+harness = false
+
 [dev-dependencies]
 proptest = "1"
 serde_json = "1"
